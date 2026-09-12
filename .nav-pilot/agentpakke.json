@@ -1,0 +1,31 @@
+{
+  "contractVersion": "1",
+  "name": "nais-platform",
+  "description": "Knowledge and skills for engineers who build the Nais platform: the Nais API, tenants and environment clusters, Fasit features, Terraform, and the Loki/Mimir/Tempo observability stack.",
+  "owner": {
+    "repo": "nais/pilot",
+    "team": "nais"
+  },
+  "clients": {
+    "copilot": {
+      "primaryAgents": [
+        "nais-platform",
+        "nais-review"
+      ],
+      "defaultModel": "gpt-5.6-sol"
+    },
+    "opencode": {
+      "primaryAgents": [
+        "nais-platform",
+        "nais-review"
+      ],
+      "defaultModel": "gpt-5.6-sol"
+    }
+  },
+  "layout": {
+    "agents": "agents",
+    "skills": "skills",
+    "instructions": "instructions"
+  },
+  "minNavPilotVersion": "2026.09.07-224440"
+}
