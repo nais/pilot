@@ -35,14 +35,14 @@ backend "gcs" {
 
 Pattern: `nais-tf-state-<tenant>`, `nais-tf-<tenant>@nais-io.iam.gserviceaccount.com`.
 
-Module sources are relative local paths — `source = "../../modules/tenant"`. Nothing is published to registry.terraform.io.
+Module sources are relative local paths: `source = "../../modules/tenant"`. Nothing is published to registry.terraform.io.
 
 ## Blast radius
 
 Answer this before proposing an edit.
 
-- `tenants/<tenant>/` — that tenant.
-- `modules/` — **every root that composes it**, usually all of them. Check the callers.
+- `tenants/<tenant>/`: that tenant.
+- `modules/`: **every root that composes it**, usually all of them. Check the callers.
 
 Read the plan Atlantis posts. It is the only thing that reports the real radius rather than the predicted one.
 
@@ -53,11 +53,11 @@ gh api repos/nais/nais-terraform-modules/contents/tenants --jq '.[].name'
 gh api repos/nais/nais-terraform-modules/contents/modules --jq '.[].name'
 ```
 
-GitHub code search is rate limited to roughly ten requests per minute and caps results. Beyond a spot check, clone and grep.
+GitHub rate limits code search to roughly ten requests per minute and caps results. Beyond a spot check, clone and grep.
 
 ## Traps
 
 - Saying "terraform" when the tool is `tofu`.
 - Proposing a local apply. Applies go through Atlantis on a PR.
-- Editing a shared module for one tenant's need — that is a fleet-wide change. Use the tenant root or a variable.
+- Editing a shared module for one tenant's need is a fleet-wide change. Use the tenant root or a variable.
 - Looking for module versions. Sources are local paths; `main` is what every tenant gets.

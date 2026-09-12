@@ -12,7 +12,7 @@ metadata:
 
 ## mise is the task runner
 
-`mise run check`, `test`, `generate`, `fmt` — shared names across Go, Rust, Kotlin and TypeScript repos. Reach for those before inventing a `go test` invocation.
+Shared names across Go, Rust, Kotlin and TypeScript repos: `mise run check`, `test`, `generate`, `fmt`. Reach for those before inventing a `go test` invocation.
 
 `nais/helm-charts` is outside this convention; its validation lives in `.github/validate/README.md`, which nothing loads automatically.
 
@@ -24,11 +24,11 @@ No separate release step to hesitate at. The pull request is the decision point.
 
 ## Local development rarely needs credentials
 
-`nais/api`, `v13s`, `api-reconcilers` and `naiserator` run offline — docker compose, kind or Tilt, seeded Postgres, fake Kubernetes clients. Reaching for a real tenant is slower and riskier.
+`nais/api`, `v13s`, `api-reconcilers` and `naiserator` run offline: docker compose, kind or Tilt, seeded Postgres, fake Kubernetes clients. Reaching for a real tenant is slower and riskier.
 
 ## Generated code
 
-Never hand-edit it; always commit the regenerated output in the same change. `nais/console-frontend`'s `schema.graphql` is generated from `nais/api` and must not be edited there.
+Never hand-edit it; always commit the regenerated output in the same change. `nais/api` generates `nais/console-frontend`'s `schema.graphql`; do not edit it there.
 
 ## Access is just-in-time and interactive
 
@@ -40,4 +40,4 @@ Repo conventions and review threads are largely Norwegian; several repos carry a
 
 ## Read the repo's AGENTS.md first
 
-Where one exists it outranks this file. `nais/fasit` has three nested ones plus a `CONTEXT.md` glossary. Several repos have none — that is not permission to assume there are no conventions.
+Where one exists it outranks this file. `nais/fasit` has three nested ones plus a `CONTEXT.md` glossary. Several repos have none. That is not permission to assume there are no conventions.

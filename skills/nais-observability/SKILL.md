@@ -17,7 +17,7 @@ metadata:
 | Value | Data |
 |---|---|
 | `nais` | Platform: `nais-system` components, node-exporter, kube-prometheus-stack rules, alerts |
-| `tenant` | The tenant's application workloads — what teams see |
+| `tenant` | The tenant's application workloads: what teams see |
 
 Same endpoint. The header is the only difference, so a wrong value returns real data answering a different question. **Platform work uses `nais`.**
 
@@ -27,7 +27,7 @@ Same endpoint. The header is the only difference, so a wrong value returns real 
 
 ## Endpoints
 
-Loki, Mimir and Grafana run on the management cluster — one per tenant:
+Loki, Mimir and Grafana run on the management cluster, one per tenant:
 
 ```
 https://loki.<tenant>.cloud.nais.io
@@ -74,8 +74,8 @@ Range queries: `/prometheus/api/v1/query_range` with `start`, `end`, `step`.
 
 `nais/helm-charts` (internal), under `features/`:
 
-- `mimir/`, `loki/`, `tempo/` — each `Feature.yaml` declares `environmentKinds`, which is why Tempo differs.
-- `alloy/templates/config.yaml` — which metrics go to which org.
-- `grafana/Feature.yaml` — provisioned datasources and the header each sends.
+- `mimir/`, `loki/`, `tempo/`: each `Feature.yaml` declares `environmentKinds`, which is why Tempo differs.
+- `alloy/templates/config.yaml`: which metrics go to which org.
+- `grafana/Feature.yaml`: provisioned datasources and the header each sends.
 
 Read those when behaviour disagrees with this file.

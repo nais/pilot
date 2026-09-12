@@ -10,7 +10,7 @@ metadata:
 
 # Taking a change through the platform
 
-Five stages. Justified by one fact: a merge is usually a deploy to every tenant, so the PR is the last point anything can be reconsidered.
+Five stages. One fact justifies them: a merge is usually a deploy to every tenant, so the PR is the last point anything can be reconsidered.
 
 ## 1. Plan
 
@@ -41,10 +41,10 @@ Revise here. A plan corrected before implementation costs nothing.
 
 Apply `nais-adversarial-review`. It owns this stage: six axes run separately, a mandatory finding per axis, and a BLOCK / CONCERNS / CLEAN verdict.
 
-The questions that are specific to a change in flight:
+Questions specific to a change in flight:
 
 - Does it do what the plan said, and only that? Scope creep is the usual finding.
-- What breaks downstream? Touching `liberator` means checking consumers — pseudo-version pins update nothing automatically.
+- What breaks downstream? Touching `liberator` means checking consumers. Pseudo-version pins update nothing automatically.
 - Is the blast radius still what you claimed? It moves during implementation.
 - What happens on a tenant that is not `dev-nais`? `nav` has on-prem environments others lack.
 - Is generated code committed and consistent with its source?
@@ -61,7 +61,7 @@ git push -u origin <branch>
 gh pr create --draft --title "<title>" --body "<body>"
 ```
 
-**Draft**, always. It runs Atlantis and the checks — the only way to see an infrastructure plan — without pulling a reviewer onto unfinished work.
+**Draft**, always. It runs Atlantis and the checks, the only way to see an infrastructure plan, without pulling a reviewer onto unfinished work.
 
 Body, in order: what and why; **blast radius**; what merging deploys; what the adversarial review found, unfixed items included; what you are unsure about and what would settle it.
 

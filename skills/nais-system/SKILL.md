@@ -8,16 +8,16 @@ metadata:
   tags: planning initiatives ambitions nais-system areas milestones
 ---
 
-# nais/system — planning
+# nais/system: planning
 
-`nais/system` (internal, "Organisering av Nais"). Planning is done as pull requests: one markdown file per item, state expressed by the PR itself.
+`nais/system` (internal, "Organisering av Nais"). Planning happens as pull requests: one markdown file per item, and the PR carries the state.
 
 ## Two types
 
 | Type | Label | Timeboxed |
 |---|---|---|
-| **Ambition** — where we want to get to | `type:ambition` | No |
-| **Initiative** — a piece of work toward it | `type:initiative` | Yes, via `size:*` |
+| **Ambition**: where we want to get to | `type:ambition` | No |
+| **Initiative**: a piece of work toward it | `type:initiative` | Yes, via `size:*` |
 
 ## The file
 
@@ -27,7 +27,7 @@ Areas: `api`, `auth`, `cli`, `cluster`, `console`, `fasit`, `meta`, `naisdevice`
 
 Sections come from `templates/initiative.md` (Essensen, Ikke-mål, Mulig løsning i grove trekk, Eventuell annen relevant informasjon) and `templates/ambition.md` (Essensen, Ønsket tilstand, Hvorfor, Mål, Ikke-mål, Retning, Bakgrunn og referanser, Tilknyttede initiativer). Use the template; do not invent sections.
 
-Written in Norwegian.
+Write in Norwegian.
 
 ## State is the PR
 
@@ -39,7 +39,7 @@ Written in Norwegian.
 | Done | Merged |
 | Discarded | Closed unmerged; the last comment says why |
 
-**Labels go on the PR, never in the file.** `type:*`, one or more `area:*`, and for initiatives `size:s` (<1 week), `size:m` (1–2 weeks), `size:l` (3–6 weeks). Size is set when it goes ready-for-review. Ambitions take no size.
+**Labels go on the PR, never in the file.** `type:*`, one or more `area:*`, and for initiatives `size:s` (<1 week), `size:m` (1–2 weeks), `size:l` (3–6 weeks). Set the size when it goes ready-for-review. Ambitions take no size.
 
 Link an initiative to its ambition with a line in the **PR body**:
 

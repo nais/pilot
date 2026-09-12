@@ -18,7 +18,7 @@ A **tenant** is one customer organisation: its own GCP folder tree, its own `<te
 
 Never hardcode the list. Two sources, neither complete.
 
-Public registry, no auth — what `nais/cli` uses:
+Public registry, no auth. `nais/cli` uses it:
 
 ```bash
 curl -s "https://storage.googleapis.com/storage/v1/b/nais-tenant-data/o?fields=items(name)" | jq -r '.items[].name'

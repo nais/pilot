@@ -24,7 +24,7 @@ Never drop a negation or a qualifier. "Only", "not", "except" carry the meaning.
 
 Shortest change that works. No abstraction for one caller, no config for a constant, no scaffolding for later.
 
-Comments explain **why**, never what. A comment restating the line is noise — delete it. If the code needs a comment to be readable, fix the code first.
+Comments explain **why**, never what. A comment restating the line is noise. Delete it. If the code needs a comment to be readable, fix the code first.
 
 ## Markdown, PRs, issues, comments, commits
 

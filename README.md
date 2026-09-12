@@ -2,7 +2,7 @@
 
 An agentpakke for engineers who **build** the Nais platform.
 
-Not for application developers deploying onto Nais — [navikt/copilot](https://github.com/navikt/copilot) ships that. Its `nais` skill is about manifests and pod troubleshooting, and its observability skill queries one tenant's application metrics. This package is about the platform itself: seven tenants, OpenTofu and Atlantis, Fasit's feature model, and the platform's own telemetry.
+Not for application developers deploying onto Nais. [navikt/copilot](https://github.com/navikt/copilot) ships that. Its `nais` skill is about manifests and pod troubleshooting, and its observability skill queries one tenant's application metrics. This package is about the platform itself: seven tenants, OpenTofu and Atlantis, Fasit's feature model, and the platform's own telemetry.
 
 The difference is one header value. `X-Scope-OrgID: tenant` returns a tenant's workloads; `X-Scope-OrgID: nais` returns `nais-system`. Same endpoint, different question.
 
@@ -41,8 +41,6 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 
 ### Reaching the reviewer
 
-Honest about where this works today.
-
 **OpenCode**: both agents are primaries; switch with Tab.
 
 **Copilot**: `nav-pilot` launches the first declared agent, so `nais-review` is not reachable through it yet. [navikt/copilot#798](https://github.com/navikt/copilot/issues/798) tracks a `--persona` flag; until it ships, start the reviewer directly:
@@ -51,11 +49,11 @@ Honest about where this works today.
 copilot --agent nais-review
 ```
 
-A model pinned in agent frontmatter applies only to a directly launched agent — a subagent inherits its parent's model. So a reviewer invoked as a subagent of the implementer runs on the implementer's model, and the separation is of role, not of model.
+A model pinned in agent frontmatter applies only to a directly launched agent. A subagent inherits its parent's model. So a reviewer invoked as a subagent of the implementer runs on the implementer's model, and the separation is of role, not of model.
 
 ## Prerequisites
 
-The agent assumes naisdevice is connected to the target tenant and that `gh` can read the `nais` org. `nais/nais-terraform-modules`, `nais/helm-charts` and `nais/system` are internal — a 404 there means missing access, not a missing repo.
+The agent assumes naisdevice is connected to the target tenant and that `gh` can read the `nais` org. `nais/nais-terraform-modules`, `nais/helm-charts` and `nais/system` are internal: a 404 there means missing access, not a missing repo.
 
 Default tenant for platform work is `dev-nais`. The skills teach discovery commands rather than hardcoded lists, so they stay correct as tenants and features change.
 
@@ -65,7 +63,7 @@ Default tenant for platform work is `dev-nais`. The skills teach discovery comma
 nav-pilot validate --source "$PWD"
 ```
 
-Skills state the rule, then the exception. Document what the code does not show: the reason, the trap, the thing that will surprise someone. Verify against source before asserting — where a doc and the code disagree, the code wins.
+Skills state the rule, then the exception. Document what the code does not show: the reason, the trap, the thing that will surprise someone. Verify against source before asserting. Where a doc and the code disagree, the code wins.
 
 ## Licence
 

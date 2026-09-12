@@ -10,7 +10,7 @@ metadata:
 
 # The Nais API
 
-`nais/api` (public, Go) — the programmatic entrypoint to a tenant's platform state, and the backend behind Nais Console.
+`nais/api` (public, Go): the programmatic entrypoint to a tenant's platform state, and the backend behind Nais Console.
 
 ## Reaching it
 
@@ -25,7 +25,7 @@ Discover the host rather than assembling it:
 curl -s "https://storage.googleapis.com/nais-tenant-data/nav.no.json" | jq -r .consoleUrl
 ```
 
-The API's ingress claims `/graphql`, `/oauth2/`, `/teams/` and `/api/v1/`. The host serves more — `/` is the Console SPA, not a playground. There is a small REST surface for applying whitelisted manifests, and a cluster-internal gRPC service on 3001 that the ingress never exposes.
+The API's ingress claims `/graphql`, `/oauth2/`, `/teams/` and `/api/v1/`. The host serves more. `/` is the Console SPA, not a playground. There is a small REST surface for applying whitelisted manifests, and a cluster-internal gRPC service on 3001 that the ingress never exposes.
 
 ## Develop locally
 
@@ -35,15 +35,15 @@ The Nais MCP server can point at that local instance, giving an agent the API su
 
 ## Codegen is mandatory
 
-gqlgen for GraphQL, sqlc + pgx for the database. A half-finished run compiles and is wrong — stray models in `internal/graph/model/donotuse/` are the sign.
+gqlgen for GraphQL, sqlc + pgx for the database. A half-finished run compiles and is wrong. Stray models in `internal/graph/model/donotuse/` are the sign.
 
-After changing a `.graphqls` file or a query: regenerate, commit the output. `mise run generate`. The `Makefile` is a shim over it — every target is a `mise run` call — so either works, and `mise` is the real entry point as in the other repos.
+After changing a `.graphqls` file or a query: regenerate, commit the output. `mise run generate`. The `Makefile` is a shim over it: every target is a `mise run` call. Either works, and `mise` is the real entry point as in the other repos.
 
 Integration tests are **Lua**, run through `nais/tester`, driven from a Go harness (`integration_tests/zz_run_test.go`, build tag `integration_test`). Look there before concluding something is untested.
 
 ## Gates
 
-Any `.graphqls` change requires review from `@nais/tooling`, enforced by a GitHub App. `main` needs no other approving review but gates four status checks.
+Any `.graphqls` change requires review from `@nais/tooling`; a GitHub App enforces it. `main` needs no other approving review but gates four status checks.
 
 ## The liberator pin
 
