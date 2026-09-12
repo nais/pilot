@@ -1,6 +1,6 @@
 ---
 name: nais-fasit
-description: Fasit, the Nais feature-management control plane — features, Feature.yaml, and why a merge reaches every tenant
+description: Fasit, the Nais feature-management control plane — features, Feature.yaml, environmentKinds (management, tenant, onprem), and why a merge reaches every tenant
 license: MIT
 compatibility: Nais platform development
 metadata:

@@ -1,6 +1,6 @@
 ---
 name: nais-change-workflow
-description: Taking a change through the Nais platform — plan, plan review, implement, adversarial self-review, draft PR
+description: Changing Nais platform code — a CRD field in liberator, a naiserator resource, an Application or Naisjob spec, a shared terraform module — through plan, review, implement, adversarial self-review and a draft PR
 license: MIT
 compatibility: Nais platform development
 metadata:

@@ -37,7 +37,7 @@ The Nais MCP server can point at that local instance, giving an agent the API su
 
 gqlgen for GraphQL, sqlc + pgx for the database. A half-finished run compiles and is wrong — stray models in `internal/graph/model/donotuse/` are the sign.
 
-After changing a `.graphqls` file or a query: regenerate, commit the output. `nais/api` uses a `Makefile`, not mise tasks — `make generate`, or the narrower `generate-sql`, `generate-graphql`, `generate-mocks`, `generate-proto`.
+After changing a `.graphqls` file or a query: regenerate, commit the output. `mise run generate`. The `Makefile` is a shim over it — every target is a `mise run` call — so either works, and `mise` is the real entry point as in the other repos.
 
 Integration tests are **Lua**, run through `nais/tester`, driven from a Go harness (`integration_tests/zz_run_test.go`, build tag `integration_test`). Look there before concluding something is untested.
 
@@ -57,4 +57,3 @@ Any `.graphqls` change requires review from `@nais/tooling`, enforced by a GitHu
 - Editing generated code. `donotuse/` means something went wrong.
 - Assuming the Lua files are the whole story; a Go harness runs them.
 - Folding a liberator bump into another change.
-- Added line for upgrade test
