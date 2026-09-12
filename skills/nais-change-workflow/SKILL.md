@@ -39,7 +39,8 @@ Revise here. A plan corrected before implementation costs nothing.
 
 ## 4. Adversarial self-review
 
-Apply `nais-adversarial-review`. It owns this stage: six axes run separately, a mandatory finding per axis, and a BLOCK / CONCERNS / CLEAN verdict.
+Apply `nais-adversarial-review`. For a second pair of eyes that did not write the
+change, start the reviewer as its own session: `nav-pilot --persona nais-review`. It owns this stage: six axes run separately, a mandatory finding per axis, and a BLOCK / CONCERNS / CLEAN verdict.
 
 Questions specific to a change in flight:
 

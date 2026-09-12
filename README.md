@@ -43,11 +43,13 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 
 **OpenCode**: both agents are primaries; switch with Tab.
 
-**Copilot**: `nav-pilot` launches the first declared agent, so `nais-review` is not reachable through it yet. [navikt/copilot#798](https://github.com/navikt/copilot/issues/798) tracks a `--persona` flag; until it ships, start the reviewer directly:
+**Copilot**: pick the agent with `--persona`.
 
 ```bash
-copilot --agent nais-review
+nav-pilot --persona nais-review
 ```
+
+Without the flag the first declared agent starts, which is `nais-platform`. A name this package does not declare is refused with the list of those it does, rather than passed to the client. The flag needs nav-pilot from 2026-09-13 or later; before that, start the reviewer directly with `copilot --agent nais-review`.
 
 A model pinned in agent frontmatter applies only to a directly launched agent. A subagent inherits its parent's model. So a reviewer invoked as a subagent of the implementer runs on the implementer's model, and the separation is of role, not of model.
 
