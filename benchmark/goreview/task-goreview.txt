@@ -1,0 +1,1 @@
+Review the Go code in this directory as if it were a pull request in a nais repository. List the problems you would raise in review, most important first. Be specific about file and symbol. Do not rewrite the code.

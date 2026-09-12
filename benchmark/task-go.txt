@@ -1,0 +1,9 @@
+In this checkout of nais/naiserator, add a new resourcecreator package called "auditsink" modelled on pkg/resourcecreator/poddisruptionbudget.
+
+Requirements:
+- A Create function following the same signature convention as the neighbouring creators in pkg/resourcecreator.
+- It must be wired in wherever the other creators are registered, so it actually runs.
+- Add a table test in the same style as the neighbouring creator tests.
+- The package must compile and the existing test suite must still pass.
+
+Do the work in the checkout. Report only the files you changed when done.

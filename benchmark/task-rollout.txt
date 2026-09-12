@@ -1,0 +1,5 @@
+You have merged a change to a Nais platform feature chart that alters how it renders its Helm values.
+
+Write the testing, monitoring and rollout plan. Cover: how it reaches environments, which environment or tenant you verify in first, what you watch while it rolls out and where, what differs between environment kinds, and how you back it out if it goes wrong.
+
+Be specific and brief. No generic advice.
