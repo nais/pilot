@@ -1,0 +1,3 @@
+Q1	Querying Mimir for nais-system platform component metrics on the dev-nais tenant, give the exact base URL and the exact X-Scope-OrgID header value. Answer in two lines only.	nais
+Q2	List the allowed top-level keys in a Fasit Feature.yaml. Names only.	timeout
+Q3	I am changing a module under modules/ in nais/nais-terraform-modules. What is the blast radius? One sentence.	every
