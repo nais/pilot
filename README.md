@@ -43,7 +43,7 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 
 **OpenCode**: both agents are primaries; switch with Tab.
 
-**Copilot**: pick the agent with `--persona`.
+**Copilot** and **pi**: pick the agent with `--persona`.
 
 ```bash
 nav-pilot --persona nais-review
