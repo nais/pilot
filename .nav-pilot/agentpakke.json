@@ -20,6 +20,13 @@
         "nais-review"
       ],
       "defaultModel": "gpt-5.6-sol"
+    },
+    "pi": {
+      "primaryAgents": [
+        "nais-platform",
+        "nais-review"
+      ],
+      "defaultModel": "gpt-5.6-sol"
     }
   },
   "layout": {
@@ -27,5 +34,5 @@
     "skills": "skills",
     "instructions": "instructions"
   },
-  "minNavPilotVersion": "2026.09.07-224440"
+  "minNavPilotVersion": "2026.09.13-122307-febd545"
 }
