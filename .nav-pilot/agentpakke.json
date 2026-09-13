@@ -32,7 +32,8 @@
   "layout": {
     "agents": "agents",
     "skills": "skills",
-    "instructions": "instructions"
+    "instructions": "instructions",
+    "hooks": "hooks"
   },
   "minNavPilotVersion": "2026.09.13-122307-febd545"
 }
