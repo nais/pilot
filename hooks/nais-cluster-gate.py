@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""preToolUse-gate: a cluster or observability command the machine cannot service.
+"""preToolUse gate: refuse a cluster or observability command the machine cannot service.
 
-Four failures cost Nais engineers real time, and every one of them looks like
-something else from inside an agent session.
+Four failures look like something else from inside an agent session.
 
-The first is naisdevice being disconnected. Every Nais cluster API lives behind
-a naisdevice gateway, so `kubectl` does not fail fast: it hangs until a timeout
-and then reports a network error. An agent reading that error reasonably
-concludes the cluster is down, the manifest is wrong, or the context is stale,
-and starts investigating the wrong thing.
+naisdevice disconnected. Every Nais cluster API sits behind a naisdevice
+gateway, so `kubectl` does not fail fast. It hangs until a timeout, reports a
+network error, and the agent starts debugging the cluster, the manifest or the
+context instead of the tunnel.
 
-The second is the active tenant and the kubectl context naming different
-tenants. That one does not fail at all. The command succeeds against a real
-cluster, just not the one the task meant.
+The active tenant and the kubectl context naming different tenants. This one
+does not fail at all. The command succeeds against a real cluster, just not
+the one the task meant.
 
-The third and fourth are the LGTM stack. A Loki, Mimir or Tempo query without
-`X-Scope-OrgID` returns 401, because there is no default org: the request fails
-on a header while looking like a query problem. And a value naming both orgs at
-once, `nais|tenant`, is rejected outright, since tenant federation is off.
+A Loki, Mimir or Tempo query without `X-Scope-OrgID`. There is no default org,
+so the query returns 401. It fails on a header and reads like a query problem.
+
+A value naming both orgs, `nais|tenant`. Tenant federation is off, so the
+server rejects it.
 
 ## What is refused
 
@@ -27,59 +26,58 @@ Only what can be established, never what is guessed:
   2. A cluster command whose kubectl context provably belongs to a tenant other
      than the active one.
   3. A request to a Nais host belonging to a tenant other than the active one.
-     The host names its tenant outright, so this one is certain where the
-     context check usually is not.
+     The host names its tenant, so this check is certain where the context
+     check usually is not.
   4. A Loki, Mimir or Tempo query with no `X-Scope-OrgID`, or one naming both
      orgs.
 
 Rules 3 and 4 read the command text, so they hold on a machine where the agent
-cannot be reached at all. Grafana is deliberately not covered by rule 4: it
-carries its own session auth, and the header is not how one talks to it.
+cannot be reached. Grafana is not covered by rule 4: it has its own session
+auth, and the header is not how one talks to it.
 
-"Provably" is narrow on purpose, because context names are tenant-dependent.
-From `internal/kubeconfig/gcpcluster.go` in nais/cli: for tenant `nav` the
-cluster `nais-dev` is renamed `dev-gcp` and `nais-prod` becomes `prod-gcp`; for
-every other tenant the `nais-` prefix is simply stripped, so `nais-dev` becomes
-`dev`; and `--prefix-with-tenants` puts `<tenant>-` in front of either form.
+"Provably" is narrow because context names are tenant-dependent. From
+`internal/kubeconfig/gcpcluster.go` in nais/cli: for tenant `nav` the cluster
+`nais-dev` is renamed `dev-gcp` and `nais-prod` becomes `prod-gcp`; for every
+other tenant the `nais-` prefix is stripped, so `nais-dev` becomes `dev`; and
+`--prefix-with-tenants` puts `<tenant>-` in front of either form.
 
-So `dev` says nothing about which tenant it belongs to, and a gate that
-required the context to contain the tenant name would refuse almost every
-correct command. Two forms are unambiguous and only those are used:
+So `dev` says nothing about its tenant, and a gate that required the context to
+contain the tenant name would refuse almost every correct command. Two forms
+are unambiguous and only those count:
 
   - a context prefixed with a known tenant name that is not the active one
-  - `dev-gcp` or `prod-gcp`, which only exist for tenant `nav`, while some
-    other tenant is active
+  - `dev-gcp` or `prod-gcp`, which exist for tenant `nav` alone, while another
+    tenant is active
 
 ## What passes
 
 Everything else, including every case the gate cannot resolve. A missing `nais`
 binary, an unreachable agent socket, a timeout, unparseable output: all pass.
-This is deliberate and it is the same rule the nav-pilot gates follow. A
-preToolUse hook that fails refuses the call, so a gate that denies whenever it
-is confused is worse than no gate at all: it would block work for reasons the
-reader cannot act on.
+The nav-pilot gates follow the same rule. A preToolUse hook that fails refuses
+the call, so a gate that denies when confused is worse than no gate: it blocks
+work for reasons the reader cannot act on.
 
 `kubectl config ...` is local and never refused, since `use-context` is how one
-fixes the very mismatch this gate reports.
+fixes the mismatch this gate reports.
 
 `NAIS_OK=1` in front of the command passes it through. The prefix is anchored
 to the start of the command so it cannot hide inside a longer chain.
 
-## Known edges, chosen rather than overlooked
+## Known edges
 
 The check runs per matching tool call and spawns `nais device status` twice,
-which costs a few hundred milliseconds on the commands it matches. There is no
-cache: naisdevice can drop mid-session, and a cached "connected" is exactly the
-answer that would be wrong when it matters.
+which costs a few hundred milliseconds. There is no cache: naisdevice can drop
+mid-session, and a cached "connected" is the one answer that would be wrong
+when it matters.
 # ponytail: no caching, add a short TTL if the latency is ever measured to hurt
 
-A tenant is read from the naisdevice agent, so an engineer on a single-tenant
-setup never sees the tenant half of this gate. Tenant switching is behind a hidden
-agent setting: `nais device config set ILoveNinetiesBoybands true`, whose own
-help text in nais/cli reads "Enable tenant switching". Without it the agent
-never populates a tenant list, so there is no active tenant to compare against.
-Switching between tenants is done from the naisdevice menu; the CLI exposes
-status, gateway, doctor, connect, disconnect and config, and nothing else.
+The tenant comes from the naisdevice agent, so an engineer on a single-tenant
+setup never sees the tenant half of this gate. Tenant switching is behind a
+hidden agent setting, `nais device config set ILoveNinetiesBoybands true`,
+whose help text in nais/cli reads "Enable tenant switching". Without it the
+agent keeps no tenant list, so there is no active tenant to compare against.
+Switching happens in the naisdevice menu; the CLI exposes status, gateway,
+doctor, connect, disconnect and config, and nothing else.
 """
 
 import json
@@ -262,23 +260,21 @@ def decide(payload, runner=run):
         if LGTM_HOST.search(command):
             if FEDERATED.search(command):
                 return (
-                    "X-Scope-OrgID names both orgs at once, and tenant federation "
-                    "is off, so this is rejected rather than merged.\n\n"
+                    "X-Scope-OrgID names both orgs. Tenant federation is off, so "
+                    "the server rejects the value instead of merging.\n\n"
                     "  Platform data:  X-Scope-OrgID: nais\n"
                     "  Workload data:  X-Scope-OrgID: tenant\n\n"
-                    "Needing both means two requests."
+                    "Both means two requests."
                 )
             if not ORG_ID.search(command):
                 return (
-                    "A Loki, Mimir or Tempo query without X-Scope-OrgID returns "
-                    "401. There is no default org, so this fails on the header "
-                    "rather than on the query.\n\n"
-                    "  Platform components, nais-system, node-exporter, alerts:\n"
+                    "Loki, Mimir and Tempo return 401 without X-Scope-OrgID. "
+                    "There is no default org.\n\n"
+                    "  Platform (nais-system, node-exporter, alerts):\n"
                     "    -H \"X-Scope-OrgID: nais\"\n"
-                    "  The tenant's application workloads, what teams see:\n"
+                    "  The tenant's application workloads:\n"
                     "    -H \"X-Scope-OrgID: tenant\"\n\n"
-                    "Platform work uses nais. Note that kube_* and container_* "
-                    "land in both orgs, so neither value is a clean split."
+                    "Platform work uses nais. kube_* and container_* land in both orgs."
                 )
 
         if not CLUSTER.search(command) and not NAIS_HOST.search(command):
@@ -292,14 +288,12 @@ def decide(payload, runner=run):
         connected = naisdevice_connected(runner)
         if connected is False:
             return (
-                "naisdevice is not connected, and every Nais cluster API is behind "
-                "a naisdevice gateway. This command would hang until it times out "
-                "and then report a network error that has nothing to do with the "
-                "cluster.\n\n"
+                "naisdevice is not connected. Every Nais cluster API sits behind "
+                "its gateway, so this command would hang until it times out and "
+                "then report a network error.\n\n"
                 "  Connect:  nais device connect\n"
                 "  Check:    nais device status\n\n"
-                "Waiting on something that does not need the gateway? Put "
-                "`NAIS_OK=1` in front of the command."
+                "Does not need the gateway? Put `NAIS_OK=1` in front of the command."
             )
         if connected is None:
             # No nais CLI, no agent socket, or a timeout. Nothing established,
@@ -318,10 +312,10 @@ def decide(payload, runner=run):
                 f"The active naisdevice tenant is {active}, but this request "
                 f"goes to {url_tenant}. The gateway routes by tenant, so it "
                 "would fail or answer for the wrong one.\n\n"
-                "  Switch tenant:   the naisdevice menu, which owns tenant "
-                "switching. The nais CLI has no command for it.\n"
-                f"  Or reach {active}:  use the {active} host instead\n\n"
-                "Meant to reach that tenant? Put `NAIS_OK=1` in front of the command."
+                "  Switch tenant:  the naisdevice menu. The nais CLI has no "
+                "command for it.\n"
+                f"  Or use the {active} host.\n\n"
+                f"Meant {url_tenant}? Put `NAIS_OK=1` in front of the command."
             )
 
         context = kube_context(runner)
@@ -331,14 +325,13 @@ def decide(payload, runner=run):
         if belongs and belongs != active:
             return (
                 f"The active naisdevice tenant is {active}, but the kubectl "
-                f"context {context} belongs to {belongs}. This command would "
-                "succeed against the wrong tenant's cluster, which is why it is "
-                "stopped here rather than reported afterwards.\n\n"
-                "  Switch tenant:   the naisdevice menu, which owns tenant "
-                "switching. The nais CLI has no command for it.\n"
+                f"context {context} belongs to {belongs}. The command would "
+                "succeed against the wrong tenant's cluster.\n\n"
+                "  Switch tenant:      the naisdevice menu. The nais CLI has no "
+                "command for it.\n"
                 f"  Or switch context:  kubectl config use-context <a context for {active}>\n"
-                "  List contexts:   kubectl config get-contexts\n\n"
-                "Meant to reach that tenant? Put `NAIS_OK=1` in front of the command."
+                "  List contexts:      kubectl config get-contexts\n\n"
+                f"Meant {belongs}? Put `NAIS_OK=1` in front of the command."
             )
     return None
 

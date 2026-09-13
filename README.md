@@ -45,20 +45,20 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 
 ### The cluster gate
 
-`kubectl` against a Nais cluster goes through a naisdevice gateway. Disconnected, it does not fail fast: it hangs until a timeout and then reports a network error, and an agent reading that error starts debugging the cluster, the manifest or the context instead of the tunnel. Worse, a kubectl context belonging to a different tenant than the active one does not fail at all, it succeeds against the wrong cluster.
+`kubectl` against a Nais cluster goes through a naisdevice gateway. Disconnected, it does not fail fast. It hangs until a timeout, reports a network error, and the agent starts debugging the cluster, the manifest or the context instead of the tunnel. A kubectl context belonging to another tenant is worse: it does not fail at all, it succeeds against the wrong cluster.
 
-The LGTM stack has two more of the same kind. A Loki, Mimir or Tempo query without `X-Scope-OrgID` returns 401, so it fails on a header while reading like a query problem. A value naming both orgs, `nais|tenant`, is rejected outright, because tenant federation is off.
+The LGTM stack adds two of the same kind. A Loki, Mimir or Tempo query without `X-Scope-OrgID` returns 401, a header failure that reads like a query problem. A value naming both orgs, `nais|tenant`, is rejected because tenant federation is off.
 
-The gate stops all four before the call, and refuses only what it can establish:
+The gate stops all four before the call. It refuses only what it can establish:
 
 - naisdevice is not connected
-- the kubectl context provably belongs to another tenant, which is true of a context prefixed with a known tenant name, and of `dev-gcp` and `prod-gcp`, the two names nais/cli mints for `nav` alone
-- the URL names another tenant. `loki.<tenant>.cloud.nais.io` says which one outright, and `tempo.<env>.<tenant>.cloud.nais.io` still puts the tenant last, so this check is certain where the context check usually is not
-- a Loki, Mimir or Tempo query carries no `X-Scope-OrgID`, or names both orgs at once. Grafana is left out: it has its own session auth
+- the kubectl context provably belongs to another tenant: a context prefixed with a known tenant name, or `dev-gcp` and `prod-gcp`, the two names nais/cli mints for `nav` alone
+- the URL names another tenant. `loki.<tenant>.cloud.nais.io` says which one, and `tempo.<env>.<tenant>.cloud.nais.io` still puts the tenant last, so this check is certain where the context check usually is not
+- a Loki, Mimir or Tempo query has no `X-Scope-OrgID`, or names both orgs. Grafana is left out: it has its own session auth
 
-Context names are tenant-dependent, so most of them prove nothing: for tenants other than `nav` the `nais-` prefix is stripped, leaving bare names like `dev`. The gate does not judge those. Anything it cannot resolve, including a machine with no `nais` CLI, passes.
+Context names are tenant-dependent, so most prove nothing. For tenants other than `nav` the `nais-` prefix is stripped, leaving bare names like `dev`, and the gate does not judge those. Anything it cannot resolve, including a machine with no `nais` CLI, passes.
 
-The two URL rules read the command itself, so they work on a machine where the agent cannot be reached at all.
+The two URL rules read the command itself, so they work when the agent cannot be reached.
 
 `NAIS_OK=1` in front of a command passes it through.
 
@@ -68,7 +68,7 @@ Tenant switching needs the agent's hidden `ILoveNinetiesBoybands` setting, whose
 nais device config set ILoveNinetiesBoybands true
 ```
 
-Without it the agent keeps no tenant list, so there is no active tenant and only the connection half of the gate applies. Switching between tenants happens in the naisdevice menu; the CLI has no command for it.
+Without it the agent keeps no tenant list, so there is no active tenant and only the connection half of the gate applies. Switching happens in the naisdevice menu; the CLI has no command for it.
 
 Hooks reach Copilot only. They install into `~/.copilot/hooks/` for `--user`, or merge into `.github/hooks/copilot-hooks.json` for a repo, so an engineer running this package under opencode or pi gets the skills and agents but not the gate.
 
