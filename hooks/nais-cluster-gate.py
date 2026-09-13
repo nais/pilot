@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""preToolUse-gate: a cluster command is refused when the machine cannot service it.
+"""preToolUse-gate: a cluster or observability command the machine cannot service.
 
-Two failures cost Nais engineers real time, and both look like something else
-from inside an agent session.
+Four failures cost Nais engineers real time, and every one of them looks like
+something else from inside an agent session.
 
 The first is naisdevice being disconnected. Every Nais cluster API lives behind
 a naisdevice gateway, so `kubectl` does not fail fast: it hangs until a timeout
@@ -14,13 +14,27 @@ The second is the active tenant and the kubectl context naming different
 tenants. That one does not fail at all. The command succeeds against a real
 cluster, just not the one the task meant.
 
+The third and fourth are the LGTM stack. A Loki, Mimir or Tempo query without
+`X-Scope-OrgID` returns 401, because there is no default org: the request fails
+on a header while looking like a query problem. And a value naming both orgs at
+once, `nais|tenant`, is rejected outright, since tenant federation is off.
+
 ## What is refused
 
 Only what can be established, never what is guessed:
 
-  1. A cluster command while naisdevice is not connected.
+  1. A cluster or observability command while naisdevice is not connected.
   2. A cluster command whose kubectl context provably belongs to a tenant other
      than the active one.
+  3. A request to a Nais host belonging to a tenant other than the active one.
+     The host names its tenant outright, so this one is certain where the
+     context check usually is not.
+  4. A Loki, Mimir or Tempo query with no `X-Scope-OrgID`, or one naming both
+     orgs.
+
+Rules 3 and 4 read the command text, so they hold on a machine where the agent
+cannot be reached at all. Grafana is deliberately not covered by rule 4: it
+carries its own session auth, and the header is not how one talks to it.
 
 "Provably" is narrow on purpose, because context names are tenant-dependent.
 From `internal/kubeconfig/gcpcluster.go` in nais/cli: for tenant `nav` the
@@ -74,9 +88,25 @@ import re
 import subprocess
 import sys
 
-CLUSTER = re.compile(r"\b(kubectl|k9s|stern|helm)\b")
+CLUSTER = re.compile(r"\b(kubectl|k9s|stern|helm|logcli|promtool)\b")
 KUBECTL_CONFIG = re.compile(r"\bkubectl\s+config\b")
 NAIS_OK = re.compile(r"^\s*NAIS_OK=1\b")
+
+# Any Nais-managed host. The tenant is the label right before cloud.nais.io,
+# which holds for the central services (loki.<tenant>.cloud.nais.io) and for
+# per-environment Tempo (tempo.<env>.<tenant>.cloud.nais.io) alike.
+NAIS_HOST = re.compile(r"https?://([a-z0-9.-]+\.cloud\.nais\.io)", re.I)
+
+# The three that read X-Scope-OrgID. Grafana is left out: it carries its own
+# session auth, and the header is not how one talks to it.
+LGTM_HOST = re.compile(r"https?://(loki|mimir|tempo)\.[a-z0-9.-]*cloud\.nais\.io", re.I)
+
+# The header, however it is spelled: a curl -H, a logcli --org-id, an env var.
+ORG_ID = re.compile(r"x-scope-orgid|--org-id|\bORG_ID=", re.I)
+
+# A value naming both orgs at once. Tenant federation is off, so the server
+# rejects it rather than merging the two.
+FEDERATED = re.compile(r"x-scope-orgid\s*:\s*[^\"'\s]*\|", re.I)
 
 # The two context names nais/cli mints only for tenant nav.
 NAV_ONLY_CONTEXTS = ("dev-gcp", "prod-gcp")
@@ -182,6 +212,27 @@ def kube_context(runner):
     return out.strip() or None
 
 
+def host_tenant(command):
+    """The tenant a Nais URL in the command names, or None.
+
+    The host says it outright, which makes this the one tenant check that needs
+    no agent: loki.dev-nais.cloud.nais.io is dev-nais, and
+    tempo.dev.dev-nais.cloud.nais.io is dev-nais too, since the environment
+    sits in front of the tenant rather than replacing it.
+    """
+    match = NAIS_HOST.search(command)
+    if not match:
+        return None
+    labels = match.group(1).lower().split(".")
+    try:
+        cloud = labels.index("cloud")
+    except ValueError:
+        return None
+    if cloud < 1:
+        return None
+    return labels[cloud - 1]
+
+
 def context_tenant(context, active, known):
     """The tenant a context provably belongs to, or None when it says nothing.
 
@@ -205,7 +256,32 @@ def decide(payload, runner=run):
     for command in command_text(args, []):
         if not command.strip() or NAIS_OK.match(command):
             continue
-        if not CLUSTER.search(command):
+
+        # The observability rules read the command itself, so they hold on a
+        # machine where the agent cannot be reached at all.
+        if LGTM_HOST.search(command):
+            if FEDERATED.search(command):
+                return (
+                    "X-Scope-OrgID names both orgs at once, and tenant federation "
+                    "is off, so this is rejected rather than merged.\n\n"
+                    "  Platform data:  X-Scope-OrgID: nais\n"
+                    "  Workload data:  X-Scope-OrgID: tenant\n\n"
+                    "Needing both means two requests."
+                )
+            if not ORG_ID.search(command):
+                return (
+                    "A Loki, Mimir or Tempo query without X-Scope-OrgID returns "
+                    "401. There is no default org, so this fails on the header "
+                    "rather than on the query.\n\n"
+                    "  Platform components, nais-system, node-exporter, alerts:\n"
+                    "    -H \"X-Scope-OrgID: nais\"\n"
+                    "  The tenant's application workloads, what teams see:\n"
+                    "    -H \"X-Scope-OrgID: tenant\"\n\n"
+                    "Platform work uses nais. Note that kube_* and container_* "
+                    "land in both orgs, so neither value is a clean split."
+                )
+
+        if not CLUSTER.search(command) and not NAIS_HOST.search(command):
             continue
         # kubectl config is local, and use-context is the fix this gate names.
         if KUBECTL_CONFIG.search(command) and not re.search(
@@ -233,6 +309,21 @@ def decide(payload, runner=run):
         active, known = tenants(runner)
         if not active:
             continue
+
+        # A URL names its tenant outright, so it is checked before the context,
+        # which usually names nothing.
+        url_tenant = host_tenant(command)
+        if url_tenant and url_tenant in known and url_tenant != active:
+            return (
+                f"The active naisdevice tenant is {active}, but this request "
+                f"goes to {url_tenant}. The gateway routes by tenant, so it "
+                "would fail or answer for the wrong one.\n\n"
+                "  Switch tenant:   the naisdevice menu, which owns tenant "
+                "switching. The nais CLI has no command for it.\n"
+                f"  Or reach {active}:  use the {active} host instead\n\n"
+                "Meant to reach that tenant? Put `NAIS_OK=1` in front of the command."
+            )
+
         context = kube_context(runner)
         if not context:
             continue
@@ -351,6 +442,38 @@ def _selftest():
          _payload("stern myapp"), _runner(connected=False), True),
         ("non-bash tool ignored",
          _payload("kubectl get pods", tool="str_replace"), _runner(connected=False), False),
+
+        # Observability. The first four need no agent at all, so they are run
+        # against a machine with no nais CLI to prove it.
+        ("mimir query without the header",
+         _payload('curl -s "https://mimir.dev-nais.cloud.nais.io/prometheus/api/v1/query?query=up"'),
+         _runner(missing=True), True),
+        ("loki query with the header passes",
+         _payload('curl -s -H "X-Scope-OrgID: nais" -G "https://loki.dev-nais.cloud.nais.io/loki/api/v1/query_range"'),
+         _runner(missing=True), False),
+        ("logcli --org-id counts as the header",
+         _payload("logcli --addr=https://loki.dev-nais.cloud.nais.io --org-id=nais query '{app=\"x\"}'"),
+         _runner(missing=True), False),
+        ("federated org is refused",
+         _payload('curl -H "X-Scope-OrgID: nais|tenant" https://mimir.dev-nais.cloud.nais.io/prometheus/api/v1/query'),
+         _runner(missing=True), True),
+        ("grafana is not an LGTM query host",
+         _payload("curl -s https://grafana.dev-nais.cloud.nais.io/api/health"),
+         _runner(missing=True), False),
+        ("tempo host names the tenant behind the env",
+         _payload('curl -H "X-Scope-OrgID: nais" https://tempo.dev.dev-nais.cloud.nais.io/api/search'),
+         _runner(active="nav", tenant_names=("nav", "dev-nais"), context=""), True),
+        ("tempo host of the active tenant passes",
+         _payload('curl -H "X-Scope-OrgID: nais" https://tempo.dev.dev-nais.cloud.nais.io/api/search'),
+         _runner(active="dev-nais", tenant_names=("nav", "dev-nais"), context=""), False),
+        ("nais host while disconnected",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.dev-nais.cloud.nais.io/loki/api/v1/labels'),
+         _runner(connected=False), True),
+        ("unknown tenant in a host is not judged",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.made-up.cloud.nais.io/loki/api/v1/labels'),
+         _runner(active="nav", tenant_names=("nav", "dev-nais"), context=""), False),
+        ("a non-nais URL is not touched",
+         _payload("curl -s https://example.com/api"), _runner(connected=False), False),
     ]
 
     failed = 0

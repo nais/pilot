@@ -41,18 +41,24 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 
 | Hook | |
 |---|---|
-| `nais-cluster-gate` | refuses a cluster command the machine cannot service |
+| `nais-cluster-gate` | refuses a cluster or observability command the machine cannot service |
 
 ### The cluster gate
 
 `kubectl` against a Nais cluster goes through a naisdevice gateway. Disconnected, it does not fail fast: it hangs until a timeout and then reports a network error, and an agent reading that error starts debugging the cluster, the manifest or the context instead of the tunnel. Worse, a kubectl context belonging to a different tenant than the active one does not fail at all, it succeeds against the wrong cluster.
 
-The gate stops both before the call, and refuses only what it can establish:
+The LGTM stack has two more of the same kind. A Loki, Mimir or Tempo query without `X-Scope-OrgID` returns 401, so it fails on a header while reading like a query problem. A value naming both orgs, `nais|tenant`, is rejected outright, because tenant federation is off.
+
+The gate stops all four before the call, and refuses only what it can establish:
 
 - naisdevice is not connected
-- the context provably belongs to another tenant, which is true of a context prefixed with a known tenant name, and of `dev-gcp` and `prod-gcp`, the two names nais/cli mints for `nav` alone
+- the kubectl context provably belongs to another tenant, which is true of a context prefixed with a known tenant name, and of `dev-gcp` and `prod-gcp`, the two names nais/cli mints for `nav` alone
+- the URL names another tenant. `loki.<tenant>.cloud.nais.io` says which one outright, and `tempo.<env>.<tenant>.cloud.nais.io` still puts the tenant last, so this check is certain where the context check usually is not
+- a Loki, Mimir or Tempo query carries no `X-Scope-OrgID`, or names both orgs at once. Grafana is left out: it has its own session auth
 
 Context names are tenant-dependent, so most of them prove nothing: for tenants other than `nav` the `nais-` prefix is stripped, leaving bare names like `dev`. The gate does not judge those. Anything it cannot resolve, including a machine with no `nais` CLI, passes.
+
+The two URL rules read the command itself, so they work on a machine where the agent cannot be reached at all.
 
 `NAIS_OK=1` in front of a command passes it through.
 
