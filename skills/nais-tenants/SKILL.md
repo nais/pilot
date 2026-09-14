@@ -57,13 +57,15 @@ nais device status --output json | jq -r '.Tenants[]? | select(.active) | .name'
 
 `AgentStatus.Tenants[]` holds one entry per tenant with `name` and `active`, and exactly one carries `active: true`. Do not print the whole document: `Tenants[].session.key` is the connected tenant's session token.
 
-Empty output does not mean no tenant. The agent only builds a tenant list when the hidden setting `ILoveNinetiesBoybands` is on, whose own help text reads "Enable tenant switching":
+**The name is not the short tenant name.** A stock agent is compiled with one tenant, `NAV`. With the hidden `ILoveNinetiesBoybands` setting on, whose own help text reads "Enable tenant switching":
 
 ```bash
 nais device config set ILoveNinetiesBoybands true
 ```
 
-Without it the list is empty and the connected tenant cannot be read from the CLI at all. Say that rather than assuming a default.
+the agent appends the object names from the `naisdevice-enroll-discovery` bucket, which are **domains**: `nav.no`, `dev-nais.io`, `ssb.no`, `arbeidstilsynet.no`, `ci-nais.io`, `test-nais.no`, `miljodir.no`, `landbruksdirektoratet.no`, plus `default` and `nais.io`.
+
+So the command above answers `NAV`, or something like `dev-nais.io`. Map it before you use it anywhere: drop the `.no` or `.io`, lowercase it, and apply the short names `arbeidstilsynet` → `atil` and `landbruksdirektoratet` → `ldir`. Hosts, cluster names and kubectl contexts all use the short form; comparing a domain against one of those is a silent mismatch, not an error.
 
 **There is no command to switch.** `nais device` has `status`, `connect`, `disconnect`, `gateway`, `doctor` and `config`, and nothing else. The agent does expose a `SetActiveTenant` RPC, but no CLI command calls it; switching is a person choosing the tenant in the naisdevice menu.
 
