@@ -71,11 +71,13 @@ mid-session, and a cached "connected" is the one answer that would be wrong
 when it matters.
 # ponytail: no caching, add a short TTL if the latency is ever measured to hurt
 
-The tenant comes from the naisdevice agent, so an engineer on a single-tenant
-setup never sees the tenant half of this gate. Tenant switching is behind a
-hidden agent setting, `nais device config set ILoveNinetiesBoybands true`,
-whose help text in nais/cli reads "Enable tenant switching". Without it the
-agent keeps no tenant list, so there is no active tenant to compare against.
+The tenant comes from the naisdevice agent, which reports domains rather than
+the short names the rest of the platform uses, so every name goes through
+`short_name` before it is compared. Tenant switching is behind a hidden agent
+setting, `nais device config set ILoveNinetiesBoybands true`, whose help text in
+nais/cli reads "Enable tenant switching". Without it `runtimeconfig.go` still
+seeds one compiled-in tenant, `NAV`, marked active, so an engineer on a
+single-tenant setup has an active tenant and sees only the contexts it matches.
 Switching happens in the naisdevice menu; the CLI exposes status, gateway,
 doctor, connect, disconnect and config, and nothing else.
 """
@@ -108,6 +110,40 @@ FEDERATED = re.compile(r"x-scope-orgid\s*:\s*[^\"'\s]*\|", re.I)
 
 # The two context names nais/cli mints only for tenant nav.
 NAV_ONLY_CONTEXTS = ("dev-gcp", "prod-gcp")
+
+# The agent reports domains, not the short names that appear in hosts, cluster
+# names and kubectl contexts. `runtimeconfig.go` seeds the list with the
+# compiled-in `NAV`, and `PopulateTenants` appends the object names of the
+# `naisdevice-enroll-discovery` bucket, which are `nav.no`, `dev-nais.io`,
+# `ssb.no` and the rest. Comparing those against `dev-nais` or `ssb-dev` never
+# matches, so both tenant rules below were dead until this was normalised.
+#
+# The short name is the label in the tenant's console URL, from
+# storage.googleapis.com/nais-tenant-data/<domain>.json:
+#
+#   arbeidstilsynet.no        console.atil.cloud.nais.io       atil
+#   ci-nais.io                console.ci-nais.cloud.nais.io    ci-nais
+#   dev-nais.io               console.dev-nais.cloud.nais.io   dev-nais
+#   landbruksdirektoratet.no  console.ldir.cloud.nais.io       ldir
+#   miljodir.no               console.miljodir.cloud.nais.io   miljodir
+#   nav.no                    console.nav.cloud.nais.io        nav
+#   ssb.no                    console.ssb.cloud.nais.io        ssb
+#   test-nais.no              console.test-nais.cloud.nais.io  test-nais
+#
+# Six of the eight are the domain with its suffix dropped. That is the rule;
+# these two are the exceptions. A ninth tenant whose short name is not its
+# domain label fails open, not closed: nothing here knows that name, so its
+# URLs and contexts go unjudged until it is added to this table.
+TENANT_SHORT_NAMES = {"arbeidstilsynet": "atil", "landbruksdirektoratet": "ldir"}
+
+TENANT_SUFFIX = re.compile(r"\.(no|io)$")
+
+# Two enroll-discovery objects are not tenants. `default` and `nais.io` each
+# carry an enroller URL, but neither has a console, a project label or a record
+# in nais-tenant-data. Kept in, a kubectl context named `default` (k3s) or
+# `nais-io` (nais/cli mints that name verbatim, gcpcluster.go) is refused as
+# another tenant's.
+NOT_TENANTS = frozenset({"default", "nais.io"})
 
 TIMEOUT_SEC = 3
 
@@ -155,6 +191,21 @@ def naisdevice_connected(runner):
     return code == 0
 
 
+def short_name(name):
+    """The short tenant name a host, a cluster name or a kubectl context uses.
+
+    `NAV` has no suffix and lowercases to the right answer, which is why it
+    needs no case of its own: the two `dev-gcp` / `prod-gcp` contexts that exist
+    for that tenant alone are handled by NAV_ONLY_CONTEXTS.
+
+    Baked in rather than read from the bucket. A preToolUse hook runs per tool
+    call, so a lookup would be a network round trip each time, and it would fail
+    inside a sandbox that blocks egress — which is where being wrong costs most.
+    """
+    name = TENANT_SUFFIX.sub("", name.strip().lower())
+    return TENANT_SHORT_NAMES.get(name, name)
+
+
 def tenants(runner):
     """(active tenant, all tenant names) from the agent, or (None, []).
 
@@ -162,6 +213,9 @@ def tenants(runner):
     AgentStatus.Tenants, each with name and active. Key lookup is
     case-insensitive because the encoder that renders them is the CLI's
     choice, not ours.
+
+    Names come back through `short_name`, so every caller compares the short
+    form the rest of the platform uses rather than the domain the agent reports.
     """
     result = runner(["nais", "device", "status", "--output", "json"])
     if result is None:
@@ -192,8 +246,9 @@ def tenants(runner):
                 name = value
             elif key.lower() == "active":
                 is_active = bool(value)
-        if not name:
+        if not name or name.lower() in NOT_TENANTS:
             continue
+        name = short_name(name)
         names.append(name)
         if is_active:
             active = name
@@ -382,7 +437,16 @@ def _payload(command, tool="bash"):
     return {"toolName": tool, "toolArgs": {"command": command}}
 
 
-def _runner(connected=True, active="nav", tenant_names=("nav", "dev-nais", "ssb"),
+# What `nais device status --output json` actually reports: the compiled-in
+# `NAV` plus the object names of the naisdevice-enroll-discovery bucket. Fed to
+# the gate verbatim, because a suite built on short names the agent never emits
+# is what let both tenant rules sit dead while reporting green.
+REPORTED = ("NAV", "arbeidstilsynet.no", "ci-nais.io", "default", "dev-nais.io",
+            "landbruksdirektoratet.no", "miljodir.no", "nais.io", "nav.no",
+            "ssb.no", "test-nais.no")
+
+
+def _runner(connected=True, active="NAV", tenant_names=REPORTED,
             context="dev-gcp", missing=False):
     """A stubbed machine. missing=True is "nais is not installed"."""
 
@@ -425,19 +489,19 @@ def _selftest():
         ("kubectl config is local",
          _payload("kubectl config use-context dev-gcp"), _runner(connected=False), False),
         ("nav context while ssb active",
-         _payload("kubectl get pods"), _runner(active="ssb", context="prod-gcp"), True),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"), True),
         ("prefixed context of another tenant",
-         _payload("kubectl get pods"), _runner(active="nav", context="ssb-dev"), True),
+         _payload("kubectl get pods"), _runner(active="NAV", context="ssb-dev"), True),
         ("bare dev context is not judged",
-         _payload("kubectl get pods"), _runner(active="ssb", context="dev"), False),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="dev"), False),
         ("nav context with nav active",
-         _payload("kubectl get pods"), _runner(active="nav", context="dev-gcp"), False),
+         _payload("kubectl get pods"), _runner(active="nav.no", context="dev-gcp"), False),
         ("prefixed context of the active tenant",
-         _payload("kubectl get pods"), _runner(active="ssb", context="ssb-dev"), False),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="ssb-dev"), False),
         ("unknown context is not judged",
-         _payload("kubectl get pods"), _runner(active="nav", context="kind-local"), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context="kind-local"), False),
         ("no context is not judged",
-         _payload("kubectl get pods"), _runner(active="nav", context=""), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context=""), False),
         ("stern is a cluster command",
          _payload("stern myapp"), _runner(connected=False), True),
         ("non-bash tool ignored",
@@ -462,21 +526,66 @@ def _selftest():
          _runner(missing=True), False),
         ("tempo host names the tenant behind the env",
          _payload('curl -H "X-Scope-OrgID: nais" https://tempo.dev.dev-nais.cloud.nais.io/api/search'),
-         _runner(active="nav", tenant_names=("nav", "dev-nais"), context=""), True),
+         _runner(active="NAV", context=""), True),
         ("tempo host of the active tenant passes",
          _payload('curl -H "X-Scope-OrgID: nais" https://tempo.dev.dev-nais.cloud.nais.io/api/search'),
-         _runner(active="dev-nais", tenant_names=("nav", "dev-nais"), context=""), False),
+         _runner(active="dev-nais.io", context=""), False),
         ("nais host while disconnected",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.dev-nais.cloud.nais.io/loki/api/v1/labels'),
          _runner(connected=False), True),
         ("unknown tenant in a host is not judged",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.made-up.cloud.nais.io/loki/api/v1/labels'),
-         _runner(active="nav", tenant_names=("nav", "dev-nais"), context=""), False),
+         _runner(active="NAV", context=""), False),
         ("a non-nais URL is not touched",
          _payload("curl -s https://example.com/api"), _runner(connected=False), False),
+
+        # The names the agent reports, against the short names a host and a
+        # context use. Every one of these allowed before `short_name`, because
+        # `ssb` is not `ssb.no` and no reported name is a prefix of `ssb-dev`.
+        ("reported names: an ssb URL while dev-nais.io is active",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.ssb.cloud.nais.io/loki/api/v1/labels'),
+         _runner(active="dev-nais.io", context=""), True),
+        ("reported names: a nav-only context while ssb.no is active",
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"), True),
+        ("reported names: an atil URL while NAV is active",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.atil.cloud.nais.io/loki/api/v1/labels'),
+         _runner(active="NAV", context=""), True),
+        ("reported names: an ldir context while NAV is active",
+         _payload("kubectl get pods"), _runner(active="NAV", context="ldir-dev"), True),
+        ("reported names: the active tenant's own URL passes",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.ssb.cloud.nais.io/loki/api/v1/labels'),
+         _runner(active="ssb.no", context=""), False),
+        # NAV is the compiled-in name, dev-gcp is that tenant's own context.
+        # Before `short_name` this denied a correct command, because the gate
+        # compared the context's "nav" against an active tenant of "NAV".
+        ("reported names: a nav context while NAV is active",
+         _payload("kubectl get pods"), _runner(active="NAV", context="dev-gcp"), False),
+        # `default` and `nais.io` are enroll-discovery objects, not tenants.
+        # nais/cli mints a context named `nais-io` verbatim and k3s names its
+        # context `default`; neither belongs to another tenant.
+        ("reported names: the nais-io context is not judged",
+         _payload("kubectl get pods"), _runner(active="NAV", context="nais-io"), False),
+        ("reported names: a context named default is not judged",
+         _payload("kubectl get pods"), _runner(active="NAV", context="default"), False),
     ]
 
     failed = 0
+    for reported, want in [
+        ("NAV", "nav"),
+        ("nav.no", "nav"),
+        ("dev-nais.io", "dev-nais"),
+        ("ssb.no", "ssb"),
+        ("test-nais.no", "test-nais"),
+        ("arbeidstilsynet.no", "atil"),
+        ("landbruksdirektoratet.no", "ldir"),
+        ("dev-nais", "dev-nais"),
+    ]:
+        got = short_name(reported)
+        ok = got == want
+        print(f"{'✅' if ok else '❌'} short_name({reported!r}) == {want!r}")
+        if not ok:
+            failed += 1
+
     for name, payload, runner, want_deny in cases:
         got_deny = decide(payload, runner) is not None
         ok = got_deny == want_deny
