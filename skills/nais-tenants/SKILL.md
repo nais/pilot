@@ -45,6 +45,36 @@ Disagreement means they answer different questions: the bucket says who can log 
 
 **The `nais` GitHub org deploys into the `nav` tenant.** `nais` is not a tenant.
 
+## One tenant at a time
+
+naisdevice connects to exactly one tenant. There is no second connection alongside it, so nothing can query two tenants in the same session: no comparison of `dev-nais` against `nav`, no loop over the tenant list, no fan-out. A plan that needs two tenants needs two sessions with a human switching in between.
+
+Which one is connected:
+
+```bash
+nais device status --output json | jq -r '.Tenants[]? | select(.active) | .name'
+```
+
+`AgentStatus.Tenants[]` holds one entry per tenant with `name` and `active`, and exactly one carries `active: true`. Do not print the whole document: `Tenants[].session.key` is the connected tenant's session token.
+
+**The name is not the short tenant name.** A stock agent is compiled with one tenant, `NAV`. With the hidden `ILoveNinetiesBoybands` setting on, whose own help text reads "Enable tenant switching":
+
+```bash
+nais device config set ILoveNinetiesBoybands true
+```
+
+the agent appends the object names from the `naisdevice-enroll-discovery` bucket, which are **domains**: `nav.no`, `dev-nais.io`, `ssb.no`, `arbeidstilsynet.no`, `ci-nais.io`, `test-nais.no`, `miljodir.no`, `landbruksdirektoratet.no`, plus `default` and `nais.io`.
+
+So the command above answers `NAV`, or something like `dev-nais.io`. Map it before you use it anywhere: drop the `.no` or `.io`, lowercase it, and apply the short names `arbeidstilsynet` → `atil` and `landbruksdirektoratet` → `ldir`. Hosts, cluster names and kubectl contexts all use the short form; comparing a domain against one of those is a silent mismatch, not an error.
+
+**There is no command to switch.** `nais device` has `status`, `connect`, `disconnect`, `gateway`, `doctor` and `config`, and nothing else. The agent does expose a `SetActiveTenant` RPC, but no CLI command calls it; switching is a person choosing the tenant in the naisdevice menu.
+
+So when the tenant you were asked about is not the connected one, stop there and say so:
+
+> naisdevice is connected to `dev-nais`, so I cannot reach `nav` from here. Switching is the naisdevice menu and I have no command for it. Switch and say when to carry on.
+
+Do not answer for the connected tenant instead. That is a real answer to a question nobody asked, and it reads like the right one.
+
 ## Selecting a cluster
 
 Interactive by design:

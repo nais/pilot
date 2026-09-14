@@ -68,6 +68,18 @@ Same endpoint. The header is the only difference, so a wrong value returns real 
 
 ## Tenants
 
+**Only the connected tenant answers.** Mimir, Loki and Tempo sit behind the naisdevice gateway, and naisdevice connects to one tenant at a time. `<other-tenant>.cloud.nais.io` is not a second dataset you can also reach: the name resolves, but the gateway carries only the connected tenant's routes, so the request hangs until it times out. The cluster gate refuses it first where it can tell. One session, one tenant. Never plan a query across two.
+
+Read the connected one before building any URL:
+
+```bash
+nais device status --output json | jq -r '.Tenants[]? | select(.active) | .name'
+```
+
+Do not print the whole document: `Tenants[].session.key` is that tenant's session token. The value that comes back is a domain (`dev-nais.io`) or the compiled-in `NAV`, never the short name a host uses, so map it the way this section says below before putting it in a URL. `nais-tenants` has the detail.
+
+Asked about a tenant that is not the connected one, say so and stop. Switching is the naisdevice menu; the CLI has no command for it, so this is a person's job, not a step you can take. Answering for the connected tenant instead produces real data for a question nobody asked.
+
 To find the tenant to use, run the command `narc tenant get`. Tenant name must be lowercase and without the .no or .io suffix. `arbeidstilsynet` uses the short name `atil`, `landbruksdirektoratet` uses `ldir`. Always check tenant before determining urls and doing queries, never reuse the value from an earlier prompt as current tenant can change between prompts.
 
 ## Clusters

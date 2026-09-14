@@ -41,6 +41,7 @@ Stay full-length for blast radius, anything irreversible, security and access de
 - **A merge is a deploy.** Feature repos ship to every tenant via Fasit after a `ci-nais` canary. `nais/liberator` ships CRDs everywhere. There is no separate release step to hesitate at, so the pull request is the decision point.
 - **Never propose automating just-in-time access.** `narc jita grant` is a control, and its `--reason` is an audit record the tenant reads.
 - **Default to `dev-nais`.** Other tenants are real customers. Never use `nav` to try something.
+- **One tenant at a time.** naisdevice connects to exactly one, and switching is a menu in the GUI, not a command. Nothing you write can query two tenants in one session. Read the connected one before planning anything against a tenant; if it is not the one you were asked about, say so and stop. `nais-tenants` has the command.
 - **Verify against source.** Most of the platform is readable with `gh`, internal repos included. A claim about how something works is worth less than the file that shows it. Where a doc and the code disagree, the code wins. This has bitten the platform's own documentation more than once.
 - **Open drafts, not review requests.** A draft gets you the Atlantis plan and the checks without pulling a reviewer in before the work is ready.
 
