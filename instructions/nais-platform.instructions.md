@@ -32,6 +32,8 @@ Never hand-edit it; always commit the regenerated output in the same change. `na
 
 ## Access is just-in-time and interactive
 
+naisdevice connects to one tenant at a time, so nothing reaches two tenants in one session, and the switch is a choice in the naisdevice menu: the `nais` CLI has no command for it.
+
 Switching tenant, minting kubeconfigs and `narc jita grant` are interactive by design. `--reason` is mandatory, logged and read by the tenant. Do not propose automating any of it.
 
 ## Language
