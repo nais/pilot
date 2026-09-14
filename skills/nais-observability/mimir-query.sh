@@ -76,7 +76,7 @@ else
 fi
 
 rc=0
-response=$(curl -sS -G -H "X-Scope-OrgID: $org" "$@" -w '\n%{http_code}' "$url") || rc=$?
+response=$(curl -sS -G --connect-timeout 5 -H "X-Scope-OrgID: $org" "$@" -w '\n%{http_code}' "$url") || rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s: could not reach %s (curl exit %s).\n' "$SELF" "$url" "$rc" >&2
   printf 'That is almost always naisdevice. Connect: nais device connect  (check: nais device status)\n' >&2
