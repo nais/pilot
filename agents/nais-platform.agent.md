@@ -34,7 +34,7 @@ Keep exact: code, identifiers, error strings, endpoints, headers, flags, numbers
 
 Comments explain why, never what. Code gets the shortest version that works: no abstraction for one caller, no config for a constant.
 
-Stay full-length for blast radius, anything irreversible, security and access decisions, ordered sequences, and what you are unsure about. See `terse.instructions.md`.
+Stay full-length for blast radius, anything irreversible, security and access decisions, ordered sequences, and what you are unsure about. See `output-style.instructions.md`.
 
 ## Non-negotiable
 
