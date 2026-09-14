@@ -1,6 +1,6 @@
 ---
 applyTo: "**"
-name: terse
+name: output-style
 description: Output style for this package — short, exact, no filler
 license: MIT
 metadata:

@@ -2,9 +2,11 @@
 
 An agentpakke for engineers who **build** the Nais platform.
 
-Not for application developers deploying onto Nais. [navikt/copilot](https://github.com/navikt/copilot) ships that. Its `nais` skill is about manifests and pod troubleshooting, and its observability skill queries one tenant's application metrics. This package is about the platform itself: seven tenants, OpenTofu and Atlantis, Fasit's feature model, and the platform's own telemetry.
+It **reuses** [navikt/copilot](https://github.com/navikt/copilot), so installing it gives you Nav's agentpakke as well as this one. You do not choose between them.
 
-The difference is one header value. `X-Scope-OrgID: tenant` returns a tenant's workloads; `X-Scope-OrgID: nais` returns `nais-system`. Same endpoint, different question.
+Nav's half is for building applications: `klarsprak`, `code-review`, `conventional-commit`, `security-review`, the Go and GitHub Actions instructions, the `nais` skill about manifests and pod troubleshooting. This half is about the platform those applications run on: seven tenants, OpenTofu and Atlantis, Fasit's feature model, and the platform's own telemetry.
+
+The difference between the two observability skills is one header value. `X-Scope-OrgID: tenant` returns a tenant's workloads; `X-Scope-OrgID: nais` returns `nais-system`. Same endpoint, different question.
 
 ## Install
 
@@ -37,11 +39,37 @@ nav-pilot export opencode --source nais/pilot
 | `nais-change-workflow` | plan, review, implement, adversarial review, draft PR |
 | `nais-adversarial-review` | six axes, a finding per axis, BLOCK/CONCERNS/CLEAN |
 
-Two agents: `nais-platform` implements, `nais-review` reviews work it did not write. Two instructions: cross-cutting conventions, and an output style that prefers less.
+Two agents: `nais-platform` implements, `nais-review` reviews work it did not write. Two instructions: `nais-platform` for cross-cutting conventions, and `output-style` for an output style that prefers less. The second deliberately shadows Nav's instruction of the same name, so one output style is loaded rather than two.
 
 | Hook | |
 |---|---|
 | `nais-cluster-gate` | refuses a cluster or observability command the machine cannot service |
+
+## Built on navikt/copilot
+
+`.nav-pilot/agentpakke.lock.json` in this repo is the whole of it:
+
+```json
+{
+  "contractVersion": "1",
+  "source": "navikt/copilot",
+  "sha": "6dc457badd90b781fa707f5b2a3700144859b839"
+}
+```
+
+Nav's pakke is taken whole. There is no `items` block, because `items` is an allowlist: excluding a handful of artifacts means enumerating the fifty-odd that remain and then maintaining that list by hand forever, and every artifact Nav adds afterwards would silently never reach a Nais engineer. A skill that never triggers costs nothing; a skill nobody knows exists costs a person.
+
+The pin moves by command, not by hand:
+
+```bash
+nav-pilot sync --apply
+```
+
+That rewrites the one `sha` line, so an upstream update arrives as a reviewable diff.
+
+**When a name exists in both, the nearer one wins** — this package's. That is how `output-style` above replaces Nav's rather than stacking on it. Nothing else collides: `nais-observability` and Nav's `observability-setup` / `observability-debugging` are different skills for different scopes, and Nav's `nais` skill is for deploying onto the platform, not building it.
+
+Only the whole-package install and `sync` compose. `install --all`, the interactive picker, and installing a single artifact by name read this repo's content alone ([navikt/copilot#844](https://github.com/navikt/copilot/issues/844)). `nav-pilot list --source nais/pilot` likewise shows only this package.
 
 ### The cluster gate
 
