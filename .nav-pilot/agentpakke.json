@@ -35,5 +35,17 @@
     "instructions": "instructions",
     "hooks": "hooks"
   },
+  "policies": {
+    "propose": {
+      "cplt": {
+        "reason": "The nais-observability skill queries Mimir, Loki and Tempo at *.cloud.nais.io, which resolve to private IP addresses over naisdevice and are blocked without this waiver.",
+        "proxy": {
+          "allow_private_domains": [
+            "cloud.nais.io"
+          ]
+        }
+      }
+    }
+  },
   "minNavPilotVersion": "2026.09.13-122307-febd545"
 }
