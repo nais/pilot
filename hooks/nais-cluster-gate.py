@@ -131,10 +131,19 @@ NAV_ONLY_CONTEXTS = ("dev-gcp", "prod-gcp")
 #   test-nais.no              console.test-nais.cloud.nais.io  test-nais
 #
 # Six of the eight are the domain with its suffix dropped. That is the rule;
-# these two are the exceptions.
+# these two are the exceptions. A ninth tenant whose short name is not its
+# domain label fails open, not closed: nothing here knows that name, so its
+# URLs and contexts go unjudged until it is added to this table.
 TENANT_SHORT_NAMES = {"arbeidstilsynet": "atil", "landbruksdirektoratet": "ldir"}
 
 TENANT_SUFFIX = re.compile(r"\.(no|io)$")
+
+# Two enroll-discovery objects are not tenants. `default` and `nais.io` each
+# carry an enroller URL, but neither has a console, a project label or a record
+# in nais-tenant-data. Kept in, a kubectl context named `default` (k3s) or
+# `nais-io` (nais/cli mints that name verbatim, gcpcluster.go) is refused as
+# another tenant's.
+NOT_TENANTS = frozenset({"default", "nais.io"})
 
 TIMEOUT_SEC = 3
 
@@ -237,7 +246,7 @@ def tenants(runner):
                 name = value
             elif key.lower() == "active":
                 is_active = bool(value)
-        if not name:
+        if not name or name.lower() in NOT_TENANTS:
             continue
         name = short_name(name)
         names.append(name)
@@ -432,9 +441,9 @@ def _payload(command, tool="bash"):
 # `NAV` plus the object names of the naisdevice-enroll-discovery bucket. Fed to
 # the gate verbatim, because a suite built on short names the agent never emits
 # is what let both tenant rules sit dead while reporting green.
-REPORTED = ("NAV", "arbeidstilsynet.no", "ci-nais.io", "dev-nais.io",
-            "landbruksdirektoratet.no", "miljodir.no", "nav.no", "ssb.no",
-            "test-nais.no")
+REPORTED = ("NAV", "arbeidstilsynet.no", "ci-nais.io", "default", "dev-nais.io",
+            "landbruksdirektoratet.no", "miljodir.no", "nais.io", "nav.no",
+            "ssb.no", "test-nais.no")
 
 
 def _runner(connected=True, active="NAV", tenant_names=REPORTED,
@@ -551,6 +560,13 @@ def _selftest():
         # compared the context's "nav" against an active tenant of "NAV".
         ("reported names: a nav context while NAV is active",
          _payload("kubectl get pods"), _runner(active="NAV", context="dev-gcp"), False),
+        # `default` and `nais.io` are enroll-discovery objects, not tenants.
+        # nais/cli mints a context named `nais-io` verbatim and k3s names its
+        # context `default`; neither belongs to another tenant.
+        ("reported names: the nais-io context is not judged",
+         _payload("kubectl get pods"), _runner(active="NAV", context="nais-io"), False),
+        ("reported names: a context named default is not judged",
+         _payload("kubectl get pods"), _runner(active="NAV", context="default"), False),
     ]
 
     failed = 0
