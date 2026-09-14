@@ -16,6 +16,8 @@ Nais is run for multiple tenants. Each has their own clusters and observability 
 
 `nais device connect`, and one private-domain waiver: every `*.cloud.nais.io` name resolves to a private IP over naisdevice, which cplt blocks by default with `403 Private target blocked by cplt`.
 
+This package declares that waiver in its manifest so a recent nav-pilot can ask you to grant it at install. The mechanism that reads the declaration is [navikt/copilot#861](https://github.com/navikt/copilot/pull/861), still in review, so today nothing asks and every install needs the command below by hand. That stays the fallback afterwards too: declining the question, or an older nav-pilot, means running it yourself.
+
 ```bash
 cplt config set proxy.allow_private_domains cloud.nais.io
 ```
@@ -24,16 +26,18 @@ The match is suffix-based, so that one entry covers every tenant. Do not add one
 
 ## Queries
 
-For mimir queries, use the script `~/.copilot/skills/nais-observability/mimir-query.sh`. Usage:
+nav-pilot sets `NAV_PILOT_SKILLS_DIR` at launch to the directory it materialised these skills into for the client you are running, because that directory differs per client. Use it rather than a literal path. If it is unset, nav-pilot materialised no skills for this client and the scripts are not on disk: query the endpoints with `curl`, sending `X-Scope-OrgID` yourself, as under Tempo below.
+
+For mimir queries, use the script `$NAV_PILOT_SKILLS_DIR/nais-observability/mimir-query.sh`. Usage:
 
 ```
-bash ~/.copilot/skills/nais-observability/mimir-query.sh <tenant> <promql> [--range <start> <end> <step>] [--org nais|tenant]
+bash "$NAV_PILOT_SKILLS_DIR/nais-observability/mimir-query.sh" <tenant> <promql> [--range <start> <end> <step>] [--org nais|tenant]
 ```
 
-Similar for loki queries, use the script `~/.copilot/skills/nais-observability/loki-query.sh`. Usage:
+Similar for loki queries, use the script `$NAV_PILOT_SKILLS_DIR/nais-observability/loki-query.sh`. Usage:
 
 ```
-bash ~/.copilot/skills/nais-observability/loki-query.sh <tenant> <logql> [--range <start> <end> [step]] [--limit <n>] [--org nais|tenant]
+bash "$NAV_PILOT_SKILLS_DIR/nais-observability/loki-query.sh" <tenant> <logql> [--range <start> <end> [step]] [--limit <n>] [--org nais|tenant]
 ```
 
 Both are invoked through `bash` because a skill's files install without the executable bit: running code is a different trust question and has its own artifact kinds.
@@ -43,8 +47,8 @@ Both default to `--org nais`, the platform's own data, since this package is for
 Both print what the API returns and nothing else, so pipe them to `jq` yourself.
 
 ```bash
-bash ~/.copilot/skills/nais-observability/mimir-query.sh dev-nais 'up{namespace="nais-system"}' | jq .
-bash ~/.copilot/skills/nais-observability/loki-query.sh dev-nais '{service_name="kube-events"}' --limit 20 | jq .
+bash "$NAV_PILOT_SKILLS_DIR/nais-observability/mimir-query.sh" dev-nais 'up{namespace="nais-system"}' | jq .
+bash "$NAV_PILOT_SKILLS_DIR/nais-observability/loki-query.sh" dev-nais '{service_name="kube-events"}' --limit 20 | jq .
 ```
 
 ## The header the scripts send

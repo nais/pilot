@@ -20,6 +20,8 @@ nav-pilot install nais-platform --source nais/pilot --repo  # this repo only
 
 `--repo` writes `.nav-pilot/agentpakke.lock.json` pinning the revision; commit it so the team installs the same one. `--user` is not pinned.
 
+The package asks for one sandbox waiver at install: `proxy.allow_private_domains` for `cloud.nais.io`, because the observability skill queries Mimir, Loki and Tempo over naisdevice, where those names resolve to private IPs that cplt blocks. Declining installs everything else; the skill says how to set it by hand.
+
 Add `--dry-run` first to see what lands. For OpenCode:
 
 ```bash
@@ -38,6 +40,8 @@ nav-pilot export opencode --source nais/pilot
 | `nais-system` | ambitions and initiatives as pull requests |
 | `nais-change-workflow` | plan, review, implement, adversarial review, draft PR |
 | `nais-adversarial-review` | six axes, a finding per axis, BLOCK/CONCERNS/CLEAN |
+
+The two observability scripts are located through `NAV_PILOT_SKILLS_DIR`, which nav-pilot sets at launch to wherever it materialised the skills for the client in use. That directory differs per client, so no skill writes a literal path.
 
 Two agents: `nais-platform` implements, `nais-review` reviews work it did not write. Two instructions: `nais-platform` for cross-cutting conventions, and `output-style` for an output style that prefers less. The second deliberately shadows Nav's instruction of the same name, so one output style is loaded rather than two.
 
