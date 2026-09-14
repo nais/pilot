@@ -270,6 +270,13 @@ def decide(payload, runner=run):
                 return (
                     "Loki, Mimir and Tempo return 401 without X-Scope-OrgID. "
                     "There is no default org.\n\n"
+                    "  Mimir:  bash ~/.copilot/skills/nais-observability/mimir-query.sh "
+                    "<tenant> <promql>\n"
+                    "  Loki:   bash ~/.copilot/skills/nais-observability/loki-query.sh "
+                    "<tenant> <logql>\n\n"
+                    "They send the header and default to the platform org. Pass "
+                    "`--org tenant` for workload data.\n\n"
+                    "Raw curl, or Tempo, which has no wrapper:\n"
                     "  Platform (nais-system, node-exporter, alerts):\n"
                     "    -H \"X-Scope-OrgID: nais\"\n"
                     "  The tenant's application workloads:\n"
