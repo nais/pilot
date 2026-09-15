@@ -49,13 +49,26 @@ Disagreement means they answer different questions: the bucket says who can log 
 
 naisdevice connects to exactly one tenant. There is no second connection alongside it, so nothing can query two tenants in the same session: no comparison of `dev-nais` against `nav`, no loop over the tenant list, no fan-out. A plan that needs two tenants needs two sessions with a human switching in between.
 
-Which one is connected:
+Which one is connected. Two sources, and the file comes first:
 
 ```bash
+jq -r '.tenant, .connectionState' "$HOME/Library/Application Support/naisdevice/agent-status.json"
 nais device status --output json | jq -r '.Tenants[]? | select(.active) | .name'
 ```
 
-`AgentStatus.Tenants[]` holds one entry per tenant with `name` and `active`, and exactly one carries `active: true`. Do not print the whole document: `Tenants[].session.key` is the connected tenant's session token.
+The agent writes `agent-status.json` next to `agent-config.json` ([nais/device#564](https://github.com/nais/device/pull/564)); on Linux that is `$XDG_CONFIG_HOME/naisdevice` or `~/.config/naisdevice`. It carries `connectionState`, `tenant`, `updatedAt` and `heartbeatSeconds`, and **no secrets**. The CLI's document does: `Tenants[].session.key` is the connected tenant's bearer token, so never print that one whole.
+
+The file is also the only one of the two that answers inside cplt. The sandbox denies unix-socket connects, so `nais device status` there exits 1 with `unable to connect to naisdevice; make sure naisdevice is running`, which is exactly what it prints when naisdevice is stopped. One read grant makes the file readable:
+
+```bash
+cplt config set allow.read "$HOME/Library/Application Support/naisdevice/agent-status.json"
+```
+
+Name the file, never the directory: the directory also holds the device's private key. [navikt/copilot#885](https://github.com/navikt/copilot/issues/885) tracks letting an agentpakke propose that grant, so that the line does not have to be pasted by hand.
+
+Check the file before believing it. The agent removes it on a clean shutdown and leaves it behind on a kill, so presence means the agent got that far, never that it is running now. An `updatedAt` older than a few times `heartbeatSeconds` means the agent is gone or stuck, and `connectionState` then says what was true when it went. Missing or stale: ask the CLI. It is best effort by its own `warning` field — the format can change and the file can be removed.
+
+`AgentStatus.Tenants[]` from the CLI holds one entry per tenant with `name` and `active`, and exactly one carries `active: true`. #564 is merged but not yet in a naisdevice release, so until it is the CLI is the only source there is, and the cluster gate reads it the same way: file first, CLI second, and neither means it says so instead of guessing.
 
 **The name is not the short tenant name.** A stock agent is compiled with one tenant, `NAV`. With the hidden `ILoveNinetiesBoybands` setting on, whose own help text reads "Enable tenant switching":
 
@@ -65,7 +78,7 @@ nais device config set ILoveNinetiesBoybands true
 
 the agent appends the object names from the `naisdevice-enroll-discovery` bucket, which are **domains**: `nav.no`, `dev-nais.io`, `ssb.no`, `arbeidstilsynet.no`, `ci-nais.io`, `test-nais.no`, `miljodir.no`, `landbruksdirektoratet.no`, plus `default` and `nais.io`.
 
-So the command above answers `NAV`, or something like `dev-nais.io`. Map it before you use it anywhere: drop the `.no` or `.io`, lowercase it, and apply the short names `arbeidstilsynet` → `atil` and `landbruksdirektoratet` → `ldir`. Hosts, cluster names and kubectl contexts all use the short form; comparing a domain against one of those is a silent mismatch, not an error.
+So both commands above answer `NAV`, or something like `dev-nais.io`. Map it before you use it anywhere: drop the `.no` or `.io`, lowercase it, and apply the short names `arbeidstilsynet` → `atil` and `landbruksdirektoratet` → `ldir`. Hosts, cluster names and kubectl contexts all use the short form; comparing a domain against one of those is a silent mismatch, not an error.
 
 **There is no command to switch.** `nais device` has `status`, `connect`, `disconnect`, `gateway`, `doctor` and `config`, and nothing else. The agent does expose a `SetActiveTenant` RPC, but no CLI command calls it; switching is a person choosing the tenant in the naisdevice menu.
 
