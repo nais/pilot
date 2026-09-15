@@ -92,6 +92,18 @@ Context names are tenant-dependent, so most prove nothing. For tenants other tha
 
 The two URL rules read the command itself, so they work when the agent cannot be reached.
 
+The connection state has three answers, not two: connected, not connected, and not established. The third is what a sandbox produces. cplt denies unix-socket connects, so `nais device status` there fails with the same words it uses when naisdevice is stopped, and a gate that reads that as disconnected refuses every cluster command and advises `nais device connect`, which fails the same way.
+
+So the gate reads `agent-status.json` from the naisdevice config directory first ([nais/device#564](https://github.com/nais/device/pull/564)), and falls back to `nais device status` when the file is not there — which is every machine until #564 lands. The file answers only while it is fresh, meaning `updatedAt` is within four times the `heartbeatSeconds` it carries, since the agent leaves the file behind when it is killed. The file has no secrets in it either, unlike `nais device status --output json`, which returns the session token in `Tenants[].session.key`.
+
+When neither source answers, the gate allows and says on stderr that it is not enforcing the tenant rules. Allowing is the same fail-open rule as everywhere else here; saying so is the point, because a user who believes the gate is checking while it is not is the failure the gate exists to prevent. Inside cplt one read grant fixes it:
+
+```bash
+cplt config set allow.read "$HOME/Library/Application Support/naisdevice/agent-status.json"
+```
+
+Name the file, not the directory that holds it — the device's private key lives there too. [navikt/copilot#885](https://github.com/navikt/copilot/issues/885) tracks letting the package propose that grant at install, the way it already proposes the private-domain waiver.
+
 `NAIS_OK=1` in front of a command passes it through.
 
 Tenant switching needs the agent's hidden `ILoveNinetiesBoybands` setting, whose help text in nais/cli reads "Enable tenant switching":

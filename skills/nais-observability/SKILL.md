@@ -73,10 +73,11 @@ Same endpoint. The header is the only difference, so a wrong value returns real 
 Read the connected one before building any URL:
 
 ```bash
+jq -r .tenant "$HOME/Library/Application Support/naisdevice/agent-status.json"
 nais device status --output json | jq -r '.Tenants[]? | select(.active) | .name'
 ```
 
-Do not print the whole document: `Tenants[].session.key` is that tenant's session token. The value that comes back is a domain (`dev-nais.io`) or the compiled-in `NAV`, never the short name a host uses, so map it the way this section says below before putting it in a URL. `nais-tenants` has the detail.
+The file is the one to try first: it carries no secrets, and it answers inside cplt, where the agent socket is blocked and the CLI cannot. It is missing on a naisdevice older than [nais/device#564](https://github.com/nais/device/pull/564), and stale when the agent has stopped, which is what `updatedAt` and `heartbeatSeconds` are for. `nais-tenants` has the checks and the read grant. Do not print the CLI document whole: `Tenants[].session.key` is that tenant's session token. The value that comes back is a domain (`dev-nais.io`) or the compiled-in `NAV`, never the short name a host uses, so map it the way this section says below before putting it in a URL. `nais-tenants` has the detail.
 
 Asked about a tenant that is not the connected one, say so and stop. Switching is the naisdevice menu; the CLI has no command for it, so this is a person's job, not a step you can take. Answering for the connected tenant instead produces real data for a question nobody asked.
 
