@@ -68,7 +68,7 @@ Name the file, never the directory: the directory also holds the device's privat
 
 Check the file before believing it. The agent removes it on a clean shutdown and leaves it behind on a kill, so presence means the agent got that far, never that it is running now. An `updatedAt` older than a few times `heartbeatSeconds` means the agent is gone or stuck, and `connectionState` then says what was true when it went. Missing or stale: ask the CLI. It is best effort by its own `warning` field — the format can change and the file can be removed.
 
-`AgentStatus.Tenants[]` from the CLI holds one entry per tenant with `name` and `active`, and exactly one carries `active: true`. #564 is open, so until it lands the CLI is the only source there is, and the cluster gate reads it the same way: file first, CLI second, and neither means it says so instead of guessing.
+`AgentStatus.Tenants[]` from the CLI holds one entry per tenant with `name` and `active`, and exactly one carries `active: true`. #564 is merged but not yet in a naisdevice release, so until it is the CLI is the only source there is, and the cluster gate reads it the same way: file first, CLI second, and neither means it says so instead of guessing.
 
 **The name is not the short tenant name.** A stock agent is compiled with one tenant, `NAV`. With the hidden `ILoveNinetiesBoybands` setting on, whose own help text reads "Enable tenant switching":
 

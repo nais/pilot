@@ -84,18 +84,25 @@ So the state is resolved in this order.
      transition, and on a `heartbeatSeconds` ticker in between. A sandbox that
      will not open a socket will read a file.
   2. `nais device status`, when the file is not there. That is every machine
-     until #564 ships, so this path stays exactly as good as it was.
-  3. Neither. Stale file, unreadable file, no CLI, no socket: the gate says it
-     is not enforcing, and gets out of the way.
+     until a naisdevice with #564 is released. Exit 0 is connected; "not
+     connected to naisdevice" is the agent saying no; "unable to connect to
+     naisdevice" is a stopped agent on a laptop and the blocked socket inside
+     cplt, told apart by `__CPLT_WRAPPED`, which cplt sets in every process it
+     wraps.
+  3. Neither. Stale file, unreadable file, no CLI, an unreachable socket inside
+     cplt: the gate says it is not enforcing, and gets out of the way.
 
 Fresh means `updatedAt` is within `STALE_HEARTBEATS` × `heartbeatSeconds`, read
 from the payload rather than assumed, because the agent owns that cadence. The
 file survives a kill, so a stale file is an ordinary outcome rather than a
 corrupt one, and its `connectionState` says what was true when the agent died.
 
-Case 3 allows and writes to stderr. The fail-open rule stands, but a user who
-believes the tenant rules are being enforced while they are not is the failure
-the whole check exists to prevent, so it does not get to be silent.
+Case 3 allows and says so as `additionalContext`, which is what the model
+reads; stderr from a hook that exits 0 reaches nobody in Copilot CLI (measured,
+1.0.83). The fail-open rule stands, but a user who believes the tenant rules are
+being enforced while they are not is the failure the whole check exists to
+prevent, so it does not get to be silent. In full the first time in a session,
+one line after that: the same ten lines on every call is a notice nobody reads.
 
 The file carries no secrets, which is the other reason to prefer it:
 `nais device status --output json` puts the live session token in
@@ -236,7 +243,7 @@ def command_text(node, out):
 
 
 def run(args):
-    """Runs a command and returns (returncode, stdout). None when it cannot run."""
+    """Runs a command and returns (returncode, stdout, stderr). None when it cannot run."""
     try:
         p = subprocess.run(
             args,
@@ -244,24 +251,44 @@ def run(args):
             text=True,
             timeout=TIMEOUT_SEC,
         )
-        return p.returncode, p.stdout
+        return p.returncode, p.stdout, p.stderr
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def in_sandbox():
+    """True inside cplt, which sets this in every wrapped process."""
+    return bool(os.environ.get("__CPLT_WRAPPED"))
 
 
 def naisdevice_connected(runner):
     """True, False, or None when the answer cannot be established.
 
-    `nais device status` exits non-zero and says "not connected to naisdevice"
-    when the agent is not connected, so the exit code carries the answer.
+    `nais device status` exits non-zero with one of two messages, and they are
+    different answers (nais/cli internal/naisdevice/status.go, naisdevice.go):
+
+      "not connected to naisdevice"      the agent answered, and said no
+      "unable to connect to naisdevice"  no agent could be reached at all
+
+    The second is a stopped agent on a laptop, which is not connected, and the
+    blocked socket inside cplt, which says nothing about the tunnel. Only
+    `__CPLT_WRAPPED` tells the two apart. Any other failure is not an answer.
+
     Do not add --quiet: it turns the disconnected case into exit 0 and no
     output, which is the one reading this gate must not get wrong.
     """
     result = runner(["nais", "device", "status"])
     if result is None:
         return None
-    code, _ = result
-    return code == 0
+    code, out, err = result
+    if code == 0:
+        return True
+    text = (out + err).lower()
+    if "not connected to naisdevice" in text:
+        return False
+    if "unable to connect to naisdevice" in text:
+        return None if in_sandbox() else False
+    return None
 
 
 def status_file_path():
@@ -358,20 +385,56 @@ def naisdevice_state(runner, status_path=None, now=None):
 
 
 def unresolved_message(path=None):
-    """Said when the gate allows without having checked anything."""
-    return (
+    """Said when the gate allows without having checked anything.
+
+    One message for the sandbox and another for a laptop, because the fix is
+    different and a reader who gets both reads neither.
+    """
+    head = (
         "The gate cannot reach naisdevice, so it is NOT enforcing the tenant "
         "rules on this command. Nothing was refused, and nothing was checked.\n\n"
-        "Inside cplt the agent socket is blocked by design, and `nais device "
-        "status` there fails exactly as it does when naisdevice is stopped. The "
-        "agent also publishes its state to a file, which the sandbox can be "
-        "allowed to read:\n\n"
-        '  cplt config set allow.read "%s"\n\n'
-        "Outside a sandbox this is usually naisdevice not installed, or `nais` "
-        "not on PATH.\n\n"
-        "Check the tenant yourself before you trust what comes back."
-        % (path or status_file_path())
     )
+    if in_sandbox():
+        return head + (
+            "Inside cplt the agent socket is blocked by design. The agent also "
+            "publishes its state to a file, which the sandbox can be allowed to "
+            "read; ask the user to run, outside the sandbox:\n\n"
+            '  cplt config set allow.read "%s"\n\n'
+            "Until then, check the tenant yourself before you trust what comes back."
+            % (path or status_file_path())
+        )
+    return head + (
+        "Usually naisdevice is not installed, or `nais` is not on PATH. Say so "
+        "before running more cluster commands, and check the tenant yourself "
+        "before you trust what comes back."
+    )
+
+
+UNRESOLVED_SHORT = (
+    "nais gate: naisdevice still unreachable, tenant rules NOT enforced on this "
+    "command (see the notice earlier this session)."
+)
+
+
+def first_time_this_session(session):
+    """True the first time this is asked in a session, False after; True when
+    there is no session to remember, or nowhere to remember it.
+
+    A marker in the temp dir, because the full notice once and a line after
+    that is read, and the full notice on every call is not.
+    """
+    if not session or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(session)):
+        return True
+    import tempfile
+    marker = os.path.join(tempfile.gettempdir(), "nais-cluster-gate." + str(session))
+    try:
+        fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
+    except OSError:
+        return True
+    os.close(fd)
+    return True
 
 
 def short_name(name):
@@ -403,7 +466,7 @@ def tenants(runner):
     result = runner(["nais", "device", "status", "--output", "json"])
     if result is None:
         return None, []
-    code, out = result
+    code, out, _ = result
     if code != 0 or not out.strip():
         return None, []
     try:
@@ -442,7 +505,7 @@ def kube_context(runner):
     result = runner(["kubectl", "config", "current-context"])
     if result is None:
         return None
-    code, out = result
+    code, out, _ = result
     if code != 0:
         return None
     return out.strip() or None
@@ -542,6 +605,8 @@ def decide(payload, runner=run, status_path=None):
                 "then report a network error.\n\n"
                 "  Connect:  nais device connect\n"
                 "  Check:    nais device status\n\n"
+                "If status says it is unable to connect to naisdevice, the agent "
+                "itself is not running: start naisdevice first.\n\n"
                 "Does not need the gateway? Put `NAIS_OK=1` in front of the command."
             )
         if state.connected is None:
@@ -601,10 +666,25 @@ def main():
         decision = None
 
     if decision and not decision.deny:
-        # Allowed without having checked. stdout stays empty, because a
-        # permissionDecision of "allow" would approve a call the user would
-        # otherwise be asked about, and the gate has nothing to approve here.
-        print(decision.reason, file=sys.stderr)
+        # Allowed without having checked. No permissionDecision, because
+        # "allow" would approve a call the user would otherwise be asked about,
+        # and the gate has nothing to approve here. The text goes out as
+        # additionalContext: Copilot CLI drops a hook's stderr on exit 0
+        # (measured, 1.0.83), and this is what the model reads. stderr too, for
+        # anyone running the hook by hand.
+        session = payload.get("sessionId") or payload.get("session_id")
+        reason = decision.reason if first_time_this_session(session) else UNRESOLVED_SHORT
+        print(reason, file=sys.stderr)
+        json.dump(
+            {
+                "additionalContext": reason,
+                "hookSpecificOutput": {
+                    "hookEventName": "preToolUse",
+                    "additionalContext": reason,
+                },
+            },
+            sys.stdout,
+        )
     elif decision:
         reason = decision.reason
         json.dump(
@@ -678,9 +758,15 @@ REPORTED = ("NAV", "arbeidstilsynet.no", "ci-nais.io", "default", "dev-nais.io",
             "ssb.no", "test-nais.no")
 
 
+# The two things `nais device status` says on exit 1, verbatim from nais/cli.
+NOT_CONNECTED = "Error: not connected to naisdevice\n"
+UNREACHABLE = "Error: unable to connect to naisdevice; make sure naisdevice is running\n"
+
+
 def _runner(connected=True, active="NAV", tenant_names=REPORTED,
-            context="dev-gcp", missing=False):
-    """A stubbed machine. missing=True is "nais is not installed"."""
+            context="dev-gcp", missing=False, error=NOT_CONNECTED):
+    """A stubbed machine. missing=True is "nais is not installed"; error is
+    what the CLI prints when connected=False."""
 
     def runner(args):
         if missing:
@@ -688,7 +774,7 @@ def _runner(connected=True, active="NAV", tenant_names=REPORTED,
         if args[:3] == ["nais", "device", "status"]:
             if "--output" in args:
                 if not connected:
-                    return 1, ""
+                    return 1, "", error
                 payload = {
                     "connectionState": "Connected",
                     "Tenants": [
@@ -696,10 +782,10 @@ def _runner(connected=True, active="NAV", tenant_names=REPORTED,
                         for name in tenant_names
                     ],
                 }
-                return 0, json.dumps(payload)
-            return (0, "Connected\n") if connected else (1, "")
+                return 0, json.dumps(payload), ""
+            return (0, "Connected\n", "") if connected else (1, "", error)
         if args[:3] == ["kubectl", "config", "current-context"]:
-            return (0, context + "\n") if context else (1, "")
+            return (0, context + "\n", "") if context else (1, "", "")
         return None
 
     return runner
@@ -709,6 +795,7 @@ def _selftest():
     import tempfile
 
     tmp = tempfile.mkdtemp(prefix="nais-cluster-gate-selftest-")
+    tempfile.tempdir = tmp
     # Every CLI case points at a file that is not there, so the suite says the
     # same thing on a machine where naisdevice has already shipped #564.
     absent = os.path.join(tmp, "absent.json")
@@ -747,6 +834,14 @@ def _selftest():
          _payload("stern myapp"), _runner(connected=False), "deny"),
         ("non-bash tool ignored",
          _payload("kubectl get pods", tool="str_replace"), _runner(connected=False), "allow"),
+        # The CLI's two exit-1 messages are two answers. "unable to connect"
+        # on a laptop is a stopped agent; inside cplt it is the blocked socket,
+        # and the sandbox cases below are run with __CPLT_WRAPPED set.
+        ("unable to connect outside a sandbox is a stopped agent",
+         _payload("kubectl get pods"), _runner(connected=False, error=UNREACHABLE), "deny"),
+        ("an unknown CLI error is not an answer",
+         _payload("kubectl get pods"),
+         _runner(connected=False, error="Error: context deadline exceeded\n"), "notice"),
 
         # Observability. The first four need no agent at all, so they are run
         # against a machine with no nais CLI to prove it.
@@ -917,6 +1012,59 @@ def _selftest():
     ]
 
     failed = 0
+
+    # The two tenant tables cannot be derived from each other, so this is what
+    # keeps them from drifting apart in silence.
+    for name, ok in [
+        ("every short-name exception is a known tenant",
+         set(TENANT_SHORT_NAMES.values()) <= set(KNOWN_TENANTS)),
+        ("no non-tenant is a known tenant",
+         not (set(NOT_TENANTS) & set(KNOWN_TENANTS))),
+        ("known tenants are short names",
+         all(short_name(t) == t for t in KNOWN_TENANTS)),
+    ]:
+        print(f"{'✅' if ok else '❌'} {name}")
+        if not ok:
+            failed += 1
+
+    # Inside cplt, the same CLI output is not an answer.
+    os.environ["__CPLT_WRAPPED"] = "1"
+    try:
+        for name, payload, runner, want, fragment in [
+            ("sandbox: unable to connect cannot determine",
+             _payload("kubectl get pods"), _runner(connected=False, error=UNREACHABLE),
+             "notice", "cplt config set allow.read"),
+            ("sandbox: the agent saying disconnected still denies",
+             _payload("kubectl get pods"), _runner(connected=False), "deny", None),
+            ("sandbox: the file still wins over the CLI",
+             _payload("kubectl get pods"), _runner(connected=False, error=UNREACHABLE),
+             "allow", None),
+        ]:
+            path = _status(tmp, "sandbox-ok") if want == "allow" else absent
+            decision = decide(payload, runner, path)
+            got = _outcome(decision)
+            ok = got == want and (not fragment or fragment in decision.reason)
+            print(f"{'✅' if ok else '❌'} {name}" + ("" if ok else f" (got {got}, want {want})"))
+            if not ok:
+                failed += 1
+    finally:
+        del os.environ["__CPLT_WRAPPED"]
+
+    laptop = decide(_payload("kubectl get pods"), _runner(missing=True), absent)
+    ok = "cplt" not in laptop.reason and "not installed" in laptop.reason
+    print(f"{'✅' if ok else '❌'} laptop: the notice does not talk about cplt")
+    if not ok:
+        failed += 1
+
+    # Once in full per session, one line after that; no session, always full.
+    session = "selftest-" + os.path.basename(tmp)
+    seq = [first_time_this_session(session), first_time_this_session(session),
+           first_time_this_session(None), first_time_this_session("../../etc")]
+    ok = seq == [True, False, True, True]
+    print(f"{'✅' if ok else '❌'} the full notice is said once per session (got {seq})")
+    if not ok:
+        failed += 1
+
     for heartbeat, want in [
         (30, 120),
         (120, 480),
@@ -992,8 +1140,8 @@ def _selftest():
         failed += 1
 
     # The unresolved path on the wire: no nais, no kubectl, no status file, and
-    # a config directory that is empty on purpose. It must allow — empty stdout,
-    # exit 0 — and still say so on stderr.
+    # a config directory that is empty on purpose. It must allow — no
+    # permissionDecision, exit 0 — and still say so, as additionalContext.
     unresolved = subprocess.run(
         [sys.executable, __file__],
         input=json.dumps(_payload("kubectl get pods")),
@@ -1001,13 +1149,39 @@ def _selftest():
         text=True,
         env={"PATH": "", "HOME": tmp, "XDG_CONFIG_HOME": tmp},
     )
+    try:
+        wire = json.loads(unresolved.stdout)
+    except ValueError:
+        wire = {}
     loud_ok = (
         unresolved.returncode == 0
-        and unresolved.stdout.strip() == ""
+        and "permissionDecision" not in unresolved.stdout
+        and "NOT enforcing" in wire.get("additionalContext", "")
         and "NOT enforcing" in unresolved.stderr
     )
     print(f"{'✅' if loud_ok else '❌'} allows out loud when the state cannot be read")
     if not loud_ok:
+        failed += 1
+
+    # The same session again: one line, not the full notice.
+    again = subprocess.run(
+        [sys.executable, __file__],
+        input=json.dumps(dict(_payload("kubectl get pods"), sessionId="wire-" + os.path.basename(tmp))),
+        capture_output=True,
+        text=True,
+        env={"PATH": "", "HOME": tmp, "XDG_CONFIG_HOME": tmp, "TMPDIR": tmp},
+    )
+    again2 = subprocess.run(
+        [sys.executable, __file__],
+        input=json.dumps(dict(_payload("kubectl get pods"), sessionId="wire-" + os.path.basename(tmp))),
+        capture_output=True,
+        text=True,
+        env={"PATH": "", "HOME": tmp, "XDG_CONFIG_HOME": tmp, "TMPDIR": tmp},
+    )
+    short_ok = "NOT enforcing" in again.stdout and UNRESOLVED_SHORT in again2.stdout \
+        and "NOT enforcing" not in again2.stdout.replace(UNRESOLVED_SHORT, "")
+    print(f"{'✅' if short_ok else '❌'} the second call in a session gets one line")
+    if not short_ok:
         failed += 1
 
     print(f"\n{'all green' if failed == 0 else str(failed) + ' failed'}")
