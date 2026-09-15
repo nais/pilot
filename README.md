@@ -14,11 +14,11 @@ Requires [nav-pilot](https://github.com/navikt/copilot).
 
 ```bash
 nav-pilot list --source nais/pilot                          # what it offers
-nav-pilot install nais-platform --source nais/pilot --user  # every repo
-nav-pilot install nais-platform --source nais/pilot --repo  # this repo only
+nav-pilot install nais-platform --source nais/pilot --user  # every repo, gate always fires
+nav-pilot install nais-platform --source nais/pilot --repo  # this repo, pinned for the team
 ```
 
-`--repo` writes `.nav-pilot/agentpakke.lock.json` pinning the revision; commit it so the team installs the same one. `--user` is not pinned.
+Run both, `--user` first. `--user` is the scope the cluster gate fires in unconditionally ([below](#the-gate-needs-a-trusted-folder)), and it is per machine and per person, so it covers you and nobody else. `--repo` writes `.nav-pilot/agentpakke.lock.json` pinning the revision; commit it and the team installs the same one. `--user` is not pinned.
 
 The package asks for one sandbox waiver at install: `proxy.allow_private_domains` for `cloud.nais.io`, because the observability skill queries Mimir, Loki and Tempo over naisdevice, where those names resolve to private IPs that cplt blocks. Declining installs everything else; the skill says how to set it by hand.
 
@@ -27,6 +27,14 @@ Add `--dry-run` first to see what lands. For OpenCode:
 ```bash
 nav-pilot export opencode --source nais/pilot
 ```
+
+### The gate needs a trusted folder
+
+Copilot CLI loads `.github/hooks/` only in a folder it trusts, so a repo-scope hook can be committed, correct and doing nothing. `copilot -p`, which is what CI and scripted runs use, asks nobody, so in a checkout you have not trusted, the gate never loads and nothing says so.
+
+Start Copilot interactively once in the checkout and answer the folder-trust prompt with "Yes, and remember this folder for future sessions". Plain "Yes" trusts the session only and leaves the next `-p` run without the gate. Everyone on the repo does this on their own machine. `nav-pilot doctor` reports which hooks are installed and whether they can fire where you stand.
+
+That is why `--user` comes first: `~/.copilot/hooks/` has no trust condition. The measured detail is in nav-pilot's [Repo-hooks fyrer bare i en betrodd mappe](https://github.com/navikt/copilot/blob/main/docs/README.nav-pilot.md#repo-hooks-fyrer-bare-i-en-betrodd-mappe).
 
 ## Contents
 
@@ -81,7 +89,7 @@ Only the whole-package install and `sync` compose. `install --all`, the interact
 
 The LGTM stack adds two of the same kind. A Loki, Mimir or Tempo query without `X-Scope-OrgID` returns 401, a header failure that reads like a query problem. A value naming both orgs, `nais|tenant`, is rejected because tenant federation is off.
 
-The gate stops all four before the call. It refuses only what it can establish:
+The gate stops all four before the call, once Copilot has loaded it at all. In repo scope that depends on folder trust ([above](#the-gate-needs-a-trusted-folder)), and it is the first thing to check when the gate looks absent. It refuses only what it can establish:
 
 - naisdevice is not connected
 - the kubectl context provably belongs to another tenant: a context prefixed with a known tenant name, or `dev-gcp` and `prod-gcp`, the two names nais/cli mints for `nav` alone
