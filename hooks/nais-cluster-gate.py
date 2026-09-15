@@ -57,18 +57,56 @@ The nav-pilot gates follow the same rule. A preToolUse hook that fails refuses
 the call, so a gate that denies when confused is worse than no gate: it blocks
 work for reasons the reader cannot act on.
 
+Passing is not the same as passing quietly. See "Three answers".
+
 `kubectl config ...` is local and never refused, since `use-context` is how one
 fixes the mismatch this gate reports.
 
 `NAIS_OK=1` in front of the command passes it through. The prefix is anchored
 to the start of the command so it cannot hide inside a longer chain.
 
+## Three answers
+
+Connected, not connected, and not established. The third is not a shade of the
+second, and collapsing the two is what this section exists to prevent.
+
+cplt, the sandbox Nav runs coding agents in, denies unix-socket connects. Inside
+it `nais device status` exits 1 with "unable to connect to naisdevice; make sure
+naisdevice is running", which is byte for byte what a machine with naisdevice
+stopped prints. A gate that reads that as disconnected refuses every cluster
+command and advises `nais device connect`, which fails the same way: a loop with
+no exit that looks like a naisdevice fault and is not one.
+
+So the state is resolved in this order.
+
+  1. `agent-status.json` in the naisdevice config directory, when it is present
+     and fresh. nais/device#564 has the agent write it at startup, on every
+     transition, and on a `heartbeatSeconds` ticker in between. A sandbox that
+     will not open a socket will read a file.
+  2. `nais device status`, when the file is not there. That is every machine
+     until #564 ships, so this path stays exactly as good as it was.
+  3. Neither. Stale file, unreadable file, no CLI, no socket: the gate says it
+     is not enforcing, and gets out of the way.
+
+Fresh means `updatedAt` is within `STALE_HEARTBEATS` × `heartbeatSeconds`, read
+from the payload rather than assumed, because the agent owns that cadence. The
+file survives a kill, so a stale file is an ordinary outcome rather than a
+corrupt one, and its `connectionState` says what was true when the agent died.
+
+Case 3 allows and writes to stderr. The fail-open rule stands, but a user who
+believes the tenant rules are being enforced while they are not is the failure
+the whole check exists to prevent, so it does not get to be silent.
+
+The file carries no secrets, which is the other reason to prefer it:
+`nais device status --output json` puts the live session token in
+`Tenants[].session.key`.
+
 ## Known edges
 
-The check runs per matching tool call and spawns `nais device status` twice,
-which costs a few hundred milliseconds. There is no cache: naisdevice can drop
-mid-session, and a cached "connected" is the one answer that would be wrong
-when it matters.
+The check runs per matching tool call. When the status file answers, that costs
+one open; when it does not, it spawns `nais device status` twice, a few hundred
+milliseconds. There is no cache: naisdevice can drop mid-session, and a cached
+"connected" is the one answer that would be wrong when it matters.
 # ponytail: no caching, add a short TTL if the latency is ever measured to hurt
 
 The tenant comes from the naisdevice agent, which reports domains rather than
@@ -82,6 +120,8 @@ Switching happens in the naisdevice menu; the CLI exposes status, gateway,
 doctor, connect, disconnect and config, and nothing else.
 """
 
+import collections
+import datetime
 import json
 import os
 import re
@@ -145,7 +185,40 @@ TENANT_SUFFIX = re.compile(r"\.(no|io)$")
 # another tenant's.
 NOT_TENANTS = frozenset({"default", "nais.io"})
 
+# The short name of every tenant in the table above. The agent hands over the
+# whole list on the gRPC path; the status file carries the active tenant alone,
+# so this is what "belongs to another tenant" is judged against there. A ninth
+# tenant missing from here fails open, exactly as the table says.
+KNOWN_TENANTS = ("atil", "ci-nais", "dev-nais", "ldir", "miljodir", "nav",
+                 "ssb", "test-nais")
+
 TIMEOUT_SEC = 3
+
+# nais/device#564. The agent publishes its state next to agent-config.json,
+# because a sandbox that refuses to open a socket will still read a file.
+STATUS_FILE = "agent-status.json"
+CONNECTED = "Connected"
+
+# How many heartbeats a file may miss before it stops meaning anything. The
+# agent rewrites it every heartbeatSeconds, so one missed beat is a laptop that
+# just woke or a disk that stalled, not a dead agent. Four is two minutes at the
+# cadence the agent ships with: long enough to survive a wake, short enough that
+# an agent killed three hours ago is never read as connected.
+STALE_HEARTBEATS = 4
+
+# Used only when the payload does not say, or says something impossible. The
+# agent's own value wins; this is the floor and the ceiling around it.
+HEARTBEAT_DEFAULT_SEC = 30
+HEARTBEAT_MAX_SEC = 300
+
+# connected is True, False or None. None is an answer of its own: nothing was
+# established. active is the short tenant name or None; known is what active is
+# compared against.
+State = collections.namedtuple("State", "connected active known")
+
+# deny=True refuses the call. deny=False allows it and says why nothing was
+# checked, which is not the same as saying nothing.
+Decision = collections.namedtuple("Decision", "deny reason")
 
 
 def command_text(node, out):
@@ -189,6 +262,116 @@ def naisdevice_connected(runner):
         return None
     code, _ = result
     return code == 0
+
+
+def status_file_path():
+    """Where the agent writes agent-status.json.
+
+    `config.UserConfigDir()` in nais/device is Go's `os.UserConfigDir()` plus
+    `naisdevice`: `~/Library/Application Support/naisdevice` on macOS, and
+    `$XDG_CONFIG_HOME/naisdevice` or `~/.config/naisdevice` on Linux.
+    """
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "naisdevice", STATUS_FILE)
+
+
+def heartbeat_window(heartbeat):
+    """How old `updatedAt` may be before the file answers nothing.
+
+    Missing, non-numeric, zero, negative or absurd falls back to the 30 seconds
+    the agent currently uses. A file claiming a one-day heartbeat would
+    otherwise license a day-old answer, and the point of the field is to bound
+    how wrong a reader can be.
+    """
+    if isinstance(heartbeat, bool) or not isinstance(heartbeat, (int, float)):
+        heartbeat = HEARTBEAT_DEFAULT_SEC
+    elif not 1 <= heartbeat <= HEARTBEAT_MAX_SEC:
+        heartbeat = HEARTBEAT_DEFAULT_SEC
+    return heartbeat * STALE_HEARTBEATS
+
+
+def parse_time(value):
+    """RFC3339 as Go writes it, or None. Python spells `Z` as `+00:00`."""
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # Go always writes an offset. One without is read as local time rather than
+    # refused, since the alternative is calling a readable file unreadable.
+    return stamp.astimezone()
+
+
+def read_status_file(path=None, now=None):
+    """What the agent says about itself, or None when the file cannot say.
+
+    None covers missing, unreadable, truncated, not JSON, missing fields and
+    stale alike. Every one of them means ask the CLI instead; not one of them
+    means disconnected.
+    """
+    try:
+        with open(path or status_file_path(), encoding="utf8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    state = payload.get("connectionState")
+    if not isinstance(state, str) or not state.strip():
+        return None
+
+    stamp = parse_time(payload.get("updatedAt"))
+    if stamp is None:
+        return None
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    age = abs((now - stamp).total_seconds())
+    # abs, because a timestamp from the future is a clock that moved, not a file
+    # that is fresher than fresh.
+    if age > heartbeat_window(payload.get("heartbeatSeconds")):
+        return None
+
+    # The agent writes an empty tenant when none is active, and reports domains
+    # rather than short names, the same as the gRPC path.
+    tenant = payload.get("tenant")
+    active = None
+    if isinstance(tenant, str) and tenant.strip():
+        if tenant.strip().lower() not in NOT_TENANTS:
+            active = short_name(tenant)
+    return State(state.strip() == CONNECTED, active, KNOWN_TENANTS)
+
+
+def naisdevice_state(runner, status_path=None, now=None):
+    """The connection state and the tenant: the file first, the CLI second."""
+    state = read_status_file(status_path, now)
+    if state is not None:
+        return state
+    connected = naisdevice_connected(runner)
+    if connected is not True:
+        # False needs no tenant, and None has no way to ask for one.
+        return State(connected, None, ())
+    return State(True, *tenants(runner))
+
+
+def unresolved_message(path=None):
+    """Said when the gate allows without having checked anything."""
+    return (
+        "The gate cannot reach naisdevice, so it is NOT enforcing the tenant "
+        "rules on this command. Nothing was refused, and nothing was checked.\n\n"
+        "Inside cplt the agent socket is blocked by design, and `nais device "
+        "status` there fails exactly as it does when naisdevice is stopped. The "
+        "agent also publishes its state to a file, which the sandbox can be "
+        "allowed to read:\n\n"
+        '  cplt config set allow.read "%s"\n\n'
+        "Outside a sandbox this is usually naisdevice not installed, or `nais` "
+        "not on PATH.\n\n"
+        "Check the tenant yourself before you trust what comes back."
+        % (path or status_file_path())
+    )
 
 
 def short_name(name):
@@ -300,12 +483,16 @@ def context_tenant(context, active, known):
     return None
 
 
-def decide(payload, runner=run):
+def decide(payload, runner=run, status_path=None):
     tool = str(payload.get("toolName") or payload.get("tool_name") or "")
     if not re.search(r"bash|shell|execute", tool, re.I):
         return None
 
     args = payload.get("toolArgs") or payload.get("tool_input") or {}
+    # Held rather than returned, so a payload whose second command is refusable
+    # is still refused. A refusal outranks a notice; the notice is what is left
+    # when nothing was refused.
+    unresolved = None
     for command in command_text(args, []):
         if not command.strip() or NAIS_OK.match(command):
             continue
@@ -314,7 +501,7 @@ def decide(payload, runner=run):
         # machine where the agent cannot be reached at all.
         if LGTM_HOST.search(command):
             if FEDERATED.search(command):
-                return (
+                return Decision(True,
                     "X-Scope-OrgID names both orgs. Tenant federation is off, so "
                     "the server rejects the value instead of merging.\n\n"
                     "  Platform data:  X-Scope-OrgID: nais\n"
@@ -322,7 +509,7 @@ def decide(payload, runner=run):
                     "Both means two requests."
                 )
             if not ORG_ID.search(command):
-                return (
+                return Decision(True,
                     "Loki, Mimir and Tempo return 401 without X-Scope-OrgID. "
                     "There is no default org.\n\n"
                     "  Mimir:  bash \"$NAV_PILOT_SKILLS_DIR/nais-observability/mimir-query.sh\" "
@@ -347,9 +534,9 @@ def decide(payload, runner=run):
         ):
             continue
 
-        connected = naisdevice_connected(runner)
-        if connected is False:
-            return (
+        state = naisdevice_state(runner, status_path)
+        if state.connected is False:
+            return Decision(True,
                 "naisdevice is not connected. Every Nais cluster API sits behind "
                 "its gateway, so this command would hang until it times out and "
                 "then report a network error.\n\n"
@@ -357,12 +544,13 @@ def decide(payload, runner=run):
                 "  Check:    nais device status\n\n"
                 "Does not need the gateway? Put `NAIS_OK=1` in front of the command."
             )
-        if connected is None:
-            # No nais CLI, no agent socket, or a timeout. Nothing established,
-            # so nothing refused.
+        if state.connected is None:
+            # No status file, no nais CLI, no agent socket, or a timeout.
+            # Nothing established, so nothing refused — out loud.
+            unresolved = unresolved or Decision(False, unresolved_message(status_path))
             continue
 
-        active, known = tenants(runner)
+        active, known = state.active, state.known
         if not active:
             continue
 
@@ -370,7 +558,7 @@ def decide(payload, runner=run):
         # which usually names nothing.
         url_tenant = host_tenant(command)
         if url_tenant and url_tenant in known and url_tenant != active:
-            return (
+            return Decision(True,
                 f"The active naisdevice tenant is {active}, but this request "
                 f"goes to {url_tenant}. The gateway routes by tenant, so it "
                 "would fail or answer for the wrong one.\n\n"
@@ -385,7 +573,7 @@ def decide(payload, runner=run):
             continue
         belongs = context_tenant(context, active, known)
         if belongs and belongs != active:
-            return (
+            return Decision(True,
                 f"The active naisdevice tenant is {active}, but the kubectl "
                 f"context {context} belongs to {belongs}. The command would "
                 "succeed against the wrong tenant's cluster.\n\n"
@@ -395,7 +583,7 @@ def decide(payload, runner=run):
                 "  List contexts:      kubectl config get-contexts\n\n"
                 f"Meant {belongs}? Put `NAIS_OK=1` in front of the command."
             )
-    return None
+    return unresolved
 
 
 def main():
@@ -406,13 +594,19 @@ def main():
             with open(debug, "a", encoding="utf8") as fh:
                 fh.write(raw.rstrip("\n") + "\n")
         payload = json.loads(raw)
-        reason = decide(payload) if isinstance(payload, dict) else None
+        decision = decide(payload) if isinstance(payload, dict) else None
     except Exception:
         # Fail-open. A preToolUse hook that fails refuses the call, and a gate
         # that refuses everything is worse than no gate.
-        reason = None
+        decision = None
 
-    if reason:
+    if decision and not decision.deny:
+        # Allowed without having checked. stdout stays empty, because a
+        # permissionDecision of "allow" would approve a call the user would
+        # otherwise be asked about, and the gate has nothing to approve here.
+        print(decision.reason, file=sys.stderr)
+    elif decision:
+        reason = decision.reason
         json.dump(
             {
                 "permissionDecision": "deny",
@@ -435,6 +629,44 @@ def main():
 
 def _payload(command, tool="bash"):
     return {"toolName": tool, "toolArgs": {"command": command}}
+
+
+# A field set to _DROP is left out, which is how the missing-field cases are
+# written without a second builder.
+_DROP = object()
+
+
+def _write(tmp, name, body):
+    """A status file holding body: a dict, or raw text for the broken cases."""
+    path = os.path.join(tmp, name + ".json")
+    with open(path, "w", encoding="utf8") as fh:
+        fh.write(body if isinstance(body, str) else json.dumps(body))
+    return path
+
+
+def _status(tmp, name, age=0, **fields):
+    """Fresh and connected to NAV unless told otherwise. age is seconds old.
+
+    The payload is nais/device#564's, field for field.
+    """
+    stamp = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=age)
+    body = {
+        "connectionState": "Connected",
+        "tenant": "NAV",
+        "updatedAt": stamp.isoformat(),
+        "heartbeatSeconds": 30,
+        "warning": "best effort, may be missing or stale, format may change, "
+                   "may be removed at any time, do not depend on it",
+    }
+    body.update(fields)
+    return _write(tmp, name, {k: v for k, v in body.items() if v is not _DROP})
+
+
+def _outcome(decision):
+    """The three answers, named. `notice` is allowed but not enforced."""
+    if decision is None:
+        return "allow"
+    return "deny" if decision.deny else "notice"
 
 
 # What `nais device status --output json` actually reports: the compiled-in
@@ -474,102 +706,234 @@ def _runner(connected=True, active="NAV", tenant_names=REPORTED,
 
 
 def _selftest():
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="nais-cluster-gate-selftest-")
+    # Every CLI case points at a file that is not there, so the suite says the
+    # same thing on a machine where naisdevice has already shipped #564.
+    absent = os.path.join(tmp, "absent.json")
+
     cases = [
         # name, payload, runner, want_deny
         ("disconnected blocks kubectl",
-         _payload("kubectl get pods -n myteam"), _runner(connected=False), True),
+         _payload("kubectl get pods -n myteam"), _runner(connected=False), "deny"),
         ("connected allows kubectl",
-         _payload("kubectl get pods -n myteam"), _runner(), False),
-        ("no nais binary allows",
-         _payload("kubectl get pods"), _runner(missing=True), False),
+         _payload("kubectl get pods -n myteam"), _runner(), "allow"),
+        # Allowed, but no longer in silence: nothing was checked, and the
+        # reader is the one who has to know that.
+        ("no nais binary allows, out loud",
+         _payload("kubectl get pods"), _runner(missing=True), "notice"),
         ("NAIS_OK passes through",
-         _payload("NAIS_OK=1 kubectl get pods"), _runner(connected=False), False),
+         _payload("NAIS_OK=1 kubectl get pods"), _runner(connected=False), "allow"),
         ("non-cluster command ignored",
-         _payload("ls -la"), _runner(connected=False), False),
+         _payload("ls -la"), _runner(connected=False), "allow"),
         ("kubectl config is local",
-         _payload("kubectl config use-context dev-gcp"), _runner(connected=False), False),
+         _payload("kubectl config use-context dev-gcp"), _runner(connected=False), "allow"),
         ("nav context while ssb active",
-         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"), True),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"), "deny"),
         ("prefixed context of another tenant",
-         _payload("kubectl get pods"), _runner(active="NAV", context="ssb-dev"), True),
+         _payload("kubectl get pods"), _runner(active="NAV", context="ssb-dev"), "deny"),
         ("bare dev context is not judged",
-         _payload("kubectl get pods"), _runner(active="ssb.no", context="dev"), False),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="dev"), "allow"),
         ("nav context with nav active",
-         _payload("kubectl get pods"), _runner(active="nav.no", context="dev-gcp"), False),
+         _payload("kubectl get pods"), _runner(active="nav.no", context="dev-gcp"), "allow"),
         ("prefixed context of the active tenant",
-         _payload("kubectl get pods"), _runner(active="ssb.no", context="ssb-dev"), False),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="ssb-dev"), "allow"),
         ("unknown context is not judged",
-         _payload("kubectl get pods"), _runner(active="NAV", context="kind-local"), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context="kind-local"), "allow"),
         ("no context is not judged",
-         _payload("kubectl get pods"), _runner(active="NAV", context=""), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context=""), "allow"),
         ("stern is a cluster command",
-         _payload("stern myapp"), _runner(connected=False), True),
+         _payload("stern myapp"), _runner(connected=False), "deny"),
         ("non-bash tool ignored",
-         _payload("kubectl get pods", tool="str_replace"), _runner(connected=False), False),
+         _payload("kubectl get pods", tool="str_replace"), _runner(connected=False), "allow"),
 
         # Observability. The first four need no agent at all, so they are run
         # against a machine with no nais CLI to prove it.
         ("mimir query without the header",
          _payload('curl -s "https://mimir.dev-nais.cloud.nais.io/prometheus/api/v1/query?query=up"'),
-         _runner(missing=True), True),
-        ("loki query with the header passes",
+         _runner(missing=True), "deny"),
+        # The header rule is satisfied, so nothing is refused. The host still
+        # names a tenant nobody could check on a machine with no agent to ask,
+        # which is what the notice says.
+        ("loki query with the header passes, tenant unchecked",
          _payload('curl -s -H "X-Scope-OrgID: nais" -G "https://loki.dev-nais.cloud.nais.io/loki/api/v1/query_range"'),
-         _runner(missing=True), False),
+         _runner(missing=True), "notice"),
         ("logcli --org-id counts as the header",
          _payload("logcli --addr=https://loki.dev-nais.cloud.nais.io --org-id=nais query '{app=\"x\"}'"),
-         _runner(missing=True), False),
+         _runner(missing=True), "notice"),
         ("federated org is refused",
          _payload('curl -H "X-Scope-OrgID: nais|tenant" https://mimir.dev-nais.cloud.nais.io/prometheus/api/v1/query'),
-         _runner(missing=True), True),
+         _runner(missing=True), "deny"),
         ("grafana is not an LGTM query host",
          _payload("curl -s https://grafana.dev-nais.cloud.nais.io/api/health"),
-         _runner(missing=True), False),
+         _runner(missing=True), "notice"),
         ("tempo host names the tenant behind the env",
          _payload('curl -H "X-Scope-OrgID: nais" https://tempo.dev.dev-nais.cloud.nais.io/api/search'),
-         _runner(active="NAV", context=""), True),
+         _runner(active="NAV", context=""), "deny"),
         ("tempo host of the active tenant passes",
          _payload('curl -H "X-Scope-OrgID: nais" https://tempo.dev.dev-nais.cloud.nais.io/api/search'),
-         _runner(active="dev-nais.io", context=""), False),
+         _runner(active="dev-nais.io", context=""), "allow"),
         ("nais host while disconnected",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.dev-nais.cloud.nais.io/loki/api/v1/labels'),
-         _runner(connected=False), True),
+         _runner(connected=False), "deny"),
         ("unknown tenant in a host is not judged",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.made-up.cloud.nais.io/loki/api/v1/labels'),
-         _runner(active="NAV", context=""), False),
+         _runner(active="NAV", context=""), "allow"),
         ("a non-nais URL is not touched",
-         _payload("curl -s https://example.com/api"), _runner(connected=False), False),
+         _payload("curl -s https://example.com/api"), _runner(connected=False), "allow"),
 
         # The names the agent reports, against the short names a host and a
         # context use. Every one of these allowed before `short_name`, because
         # `ssb` is not `ssb.no` and no reported name is a prefix of `ssb-dev`.
         ("reported names: an ssb URL while dev-nais.io is active",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.ssb.cloud.nais.io/loki/api/v1/labels'),
-         _runner(active="dev-nais.io", context=""), True),
+         _runner(active="dev-nais.io", context=""), "deny"),
         ("reported names: a nav-only context while ssb.no is active",
-         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"), True),
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"), "deny"),
         ("reported names: an atil URL while NAV is active",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.atil.cloud.nais.io/loki/api/v1/labels'),
-         _runner(active="NAV", context=""), True),
+         _runner(active="NAV", context=""), "deny"),
         ("reported names: an ldir context while NAV is active",
-         _payload("kubectl get pods"), _runner(active="NAV", context="ldir-dev"), True),
+         _payload("kubectl get pods"), _runner(active="NAV", context="ldir-dev"), "deny"),
         ("reported names: the active tenant's own URL passes",
          _payload('curl -H "X-Scope-OrgID: nais" https://loki.ssb.cloud.nais.io/loki/api/v1/labels'),
-         _runner(active="ssb.no", context=""), False),
+         _runner(active="ssb.no", context=""), "allow"),
         # NAV is the compiled-in name, dev-gcp is that tenant's own context.
         # Before `short_name` this denied a correct command, because the gate
         # compared the context's "nav" against an active tenant of "NAV".
         ("reported names: a nav context while NAV is active",
-         _payload("kubectl get pods"), _runner(active="NAV", context="dev-gcp"), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context="dev-gcp"), "allow"),
         # `default` and `nais.io` are enroll-discovery objects, not tenants.
         # nais/cli mints a context named `nais-io` verbatim and k3s names its
         # context `default`; neither belongs to another tenant.
         ("reported names: the nais-io context is not judged",
-         _payload("kubectl get pods"), _runner(active="NAV", context="nais-io"), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context="nais-io"), "allow"),
         ("reported names: a context named default is not judged",
-         _payload("kubectl get pods"), _runner(active="NAV", context="default"), False),
+         _payload("kubectl get pods"), _runner(active="NAV", context="default"), "allow"),
+    ]
+
+    # The status file. The CLI is stubbed out with missing=True wherever the
+    # point is that the file answered on its own.
+    #
+    # name, payload, runner, status file, want, a fragment of the reason
+    file_cases = [
+        ("file: connected, tenant matches",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "ok"), "allow", None),
+        ("file: URL names another tenant",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.ssb.cloud.nais.io/loki/api/v1/labels'),
+         _runner(missing=True), _status(tmp, "devnais", tenant="dev-nais.io"),
+         "deny", "dev-nais"),
+        # The CLI says disconnected and the file says connected: the file wins,
+        # and the command is judged on its context rather than on the tunnel.
+        ("file: context names another tenant",
+         _payload("kubectl get pods"), _runner(connected=False, context="ssb-dev"),
+         _status(tmp, "nav"), "deny", "ssb"),
+        ("file: disconnected denies with the connect advice",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "down", connectionState="Disconnected"),
+         "deny", "nais device connect"),
+        # Anything that is not Connected is not connected. The CLI draws the
+        # line in the same place.
+        ("file: a transient state is not connected",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "boot", connectionState="Bootstrapping"), "deny", None),
+        ("file: stale and no CLI cannot determine",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "stale", age=600), "notice", "NOT enforcing"),
+        # Stale means ask the CLI, not give up: this one is decided by the CLI.
+        ("file: stale falls back to the CLI",
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"),
+         _status(tmp, "stale2", age=600), "deny", "ssb"),
+        ("file: a timestamp from the future is stale",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "future", age=-3600), "notice", None),
+        ("file: absent, CLI connected, unchanged",
+         _payload("kubectl get pods"), _runner(), absent, "allow", None),
+        ("file: absent, CLI disconnected, unchanged",
+         _payload("kubectl get pods"), _runner(connected=False), absent,
+         "deny", "nais device connect"),
+        ("file: absent, CLI names another tenant, unchanged",
+         _payload("kubectl get pods"), _runner(active="ssb.no", context="prod-gcp"),
+         absent, "deny", "ssb"),
+        ("file: unparseable",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _write(tmp, "garbage", "{not json"), "notice", None),
+        ("file: truncated",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _write(tmp, "trunc", '{"connectionState":"Conn'), "notice", None),
+        ("file: empty",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _write(tmp, "empty", ""), "notice", None),
+        ("file: JSON that is not an object",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _write(tmp, "list", "[]"), "notice", None),
+        ("file: no connectionState",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "nostate", connectionState=_DROP), "notice", None),
+        ("file: no updatedAt",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "nostamp", updatedAt=_DROP), "notice", None),
+        ("file: updatedAt is not a timestamp",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "badstamp", updatedAt="yesterday"), "notice", None),
+        # Disconnected, so freshness is visible in the answer: fresh denies,
+        # stale gives up.
+        ("file: no heartbeatSeconds falls back to 30",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "nohb", age=60, connectionState="Disconnected",
+                 heartbeatSeconds=_DROP), "deny", None),
+        ("file: heartbeatSeconds of 0 falls back to 30",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "zerohb", age=60, connectionState="Disconnected",
+                 heartbeatSeconds=0), "deny", None),
+        ("file: an absurd heartbeatSeconds is not believed",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "hugehb", age=600, connectionState="Disconnected",
+                 heartbeatSeconds=86400), "notice", None),
+        # 300 seconds old is stale at the default cadence and fresh at this
+        # one, so the threshold is the agent's number and not a constant here.
+        ("file: a slower heartbeat widens the window",
+         _payload("kubectl get pods"), _runner(missing=True),
+         _status(tmp, "slowhb", age=300, connectionState="Disconnected",
+                 heartbeatSeconds=120), "deny", None),
+        ("file: an empty tenant is not a tenant",
+         _payload('curl -H "X-Scope-OrgID: nais" https://loki.ssb.cloud.nais.io/loki/api/v1/labels'),
+         _runner(missing=True), _status(tmp, "notenant", tenant=""), "allow", None),
+        ("file: nais.io is not a tenant",
+         _payload("kubectl get pods"), _runner(connected=False, context="ssb-dev"),
+         _status(tmp, "naisio", tenant="nais.io"), "allow", None),
+        # The notice must not shadow a refusal later in the same payload.
+        ("file: a refusable second command still wins",
+         {"toolName": "bash", "toolArgs": {"steps": [
+             {"command": "kubectl get pods"},
+             {"command": 'curl -s "https://mimir.dev-nais.cloud.nais.io/'
+                         'prometheus/api/v1/query?query=up"'}]}},
+         _runner(missing=True), absent, "deny", "X-Scope-OrgID"),
+        ("file: NAIS_OK still passes through",
+         _payload("NAIS_OK=1 kubectl get pods"), _runner(missing=True),
+         _status(tmp, "down2", connectionState="Disconnected"), "allow", None),
     ]
 
     failed = 0
+    for heartbeat, want in [
+        (30, 120),
+        (120, 480),
+        (None, 120),
+        ("30", 120),
+        (True, 120),
+        (0, 120),
+        (-30, 120),
+        (86400, 120),
+        (301, 120),
+    ]:
+        got = heartbeat_window(heartbeat)
+        ok = got == want
+        print(f"{'✅' if ok else '❌'} heartbeat_window({heartbeat!r}) == {want}")
+        if not ok:
+            failed += 1
+
     for reported, want in [
         ("NAV", "nav"),
         ("nav.no", "nav"),
@@ -586,10 +950,20 @@ def _selftest():
         if not ok:
             failed += 1
 
-    for name, payload, runner, want_deny in cases:
-        got_deny = decide(payload, runner) is not None
-        ok = got_deny == want_deny
-        print(f"{'✅' if ok else '❌'} {name}")
+    for name, payload, runner, want in cases:
+        got = _outcome(decide(payload, runner, absent))
+        ok = got == want
+        print(f"{'✅' if ok else '❌'} {name}" + ("" if ok else f" (got {got}, want {want})"))
+        if not ok:
+            failed += 1
+
+    for name, payload, runner, path, want, fragment in file_cases:
+        decision = decide(payload, runner, path)
+        got = _outcome(decision)
+        ok = got == want
+        if ok and fragment:
+            ok = decision is not None and fragment in decision.reason
+        print(f"{'✅' if ok else '❌'} {name}" + ("" if ok else f" (got {got}, want {want})"))
         if not ok:
             failed += 1
 
@@ -615,6 +989,25 @@ def _selftest():
     open_ok = malformed.returncode == 0 and malformed.stdout.strip() == ""
     print(f"{'✅' if open_ok else '❌'} fails open on malformed payload")
     if not open_ok:
+        failed += 1
+
+    # The unresolved path on the wire: no nais, no kubectl, no status file, and
+    # a config directory that is empty on purpose. It must allow — empty stdout,
+    # exit 0 — and still say so on stderr.
+    unresolved = subprocess.run(
+        [sys.executable, __file__],
+        input=json.dumps(_payload("kubectl get pods")),
+        capture_output=True,
+        text=True,
+        env={"PATH": "", "HOME": tmp, "XDG_CONFIG_HOME": tmp},
+    )
+    loud_ok = (
+        unresolved.returncode == 0
+        and unresolved.stdout.strip() == ""
+        and "NOT enforcing" in unresolved.stderr
+    )
+    print(f"{'✅' if loud_ok else '❌'} allows out loud when the state cannot be read")
+    if not loud_ok:
         failed += 1
 
     print(f"\n{'all green' if failed == 0 else str(failed) + ' failed'}")
