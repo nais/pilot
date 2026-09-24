@@ -22,7 +22,7 @@ Written after a benchmark showed this package **loses** on in-repo Go authoring 
 
 ## Not imported
 
-Everything else is written for this package: the seven other skills, both instructions, and both agents.
+Everything else is written for this package: the eight other skills, both instructions, and both agents.
 
 ## Considered and rejected
 

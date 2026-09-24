@@ -45,6 +45,7 @@ That is why `--user` comes first: `~/.copilot/hooks/` has no trust condition. Th
 | `nais-terraform` | OpenTofu, Atlantis, per-tenant roots, blast radius |
 | `nais-fasit` | features, `Feature.yaml`, why a merge is a deploy |
 | `nais-observability` | Loki, Mimir, Tempo, and the header that decides what you get |
+| `nais-inspektor-gadget` | bounded eBPF captures for on-prem TCP debugging |
 | `nais-system` | ambitions and initiatives as pull requests |
 | `nais-change-workflow` | plan, review, implement, adversarial review, draft PR |
 | `nais-adversarial-review` | six axes, a finding per axis, BLOCK/CONCERNS/CLEAN |
