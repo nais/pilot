@@ -66,7 +66,7 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 {
   "contractVersion": "1",
   "source": "navikt/copilot",
-  "sha": "6dc457badd90b781fa707f5b2a3700144859b839"
+  "sha": "250bbad360e8128b7648e4f89b32cb46d449cdc3"
 }
 ```
 
