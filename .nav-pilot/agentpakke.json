@@ -12,21 +12,21 @@
         "nais-platform",
         "nais-review"
       ],
-      "defaultModel": "gpt-5.6-sol"
+      "defaultModel": "gpt-6-sol"
     },
     "opencode": {
       "primaryAgents": [
         "nais-platform",
         "nais-review"
       ],
-      "defaultModel": "gpt-5.6-sol"
+      "defaultModel": "github-copilot/gpt-6-sol"
     },
     "pi": {
       "primaryAgents": [
         "nais-platform",
         "nais-review"
       ],
-      "defaultModel": "gpt-5.6-sol"
+      "defaultModel": "github-copilot/gpt-6-sol"
     }
   },
   "layout": {
