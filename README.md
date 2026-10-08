@@ -66,7 +66,7 @@ Two agents: `nais-platform` implements, `nais-review` reviews work it did not wr
 {
   "contractVersion": "1",
   "source": "navikt/copilot",
-  "sha": "2bea110aef8957c34108d824324b3e696795eb81"
+  "sha": "5020a874655f5be0868cc0e7798207706842621b"
 }
 ```
 
@@ -75,10 +75,10 @@ Nav's pakke is taken whole. There is no `items` block, because `items` is an all
 The pin moves by command, not by hand:
 
 ```bash
-nav-pilot sync --apply
+nav-pilot pakke bump-base
 ```
 
-That rewrites the one `sha` line, so an upstream update arrives as a reviewable diff.
+`.github/workflows/agentpakke-base-bump.yaml` runs it every Monday and opens a pull request. It rewrites the one `sha` line, so an upstream update arrives as a reviewable diff.
 
 **When a name exists in both, the nearer one wins** — this package's. That is how `output-style` above replaces Nav's rather than stacking on it. Nothing else collides: `nais-observability` and Nav's `observability-setup` / `observability-debugging` are different skills for different scopes, and Nav's `nais` skill is for deploying onto the platform, not building it.
 
