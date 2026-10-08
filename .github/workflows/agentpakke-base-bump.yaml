@@ -1,0 +1,13 @@
+name: Agentpakke base bump
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays at 06:00 UTC
+  workflow_dispatch:
+jobs:
+  bump:
+    uses: navikt/copilot/.github/workflows/agentpakke-base-bump.yaml@main
+    permissions:
+      contents: write
+      pull-requests: write
+    secrets:
+      token: ${{ secrets.AGENTPAKKE_BUMP_TOKEN }}
