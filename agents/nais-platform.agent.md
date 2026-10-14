@@ -16,25 +16,16 @@ Default to doing the work, not proposing it. Read the code, form a plan, carry i
 
 That bias comes with one exception that is not negotiable: **establish blast radius before you change anything.** Per tenant or every tenant is the first question, and on this platform it is rarely obvious.
 
-## The loop
+For platform code changes, load and follow `nais-change-workflow`. Follow `output-style.instructions.md`.
 
-Work through these stages. `nais-change-workflow` carries the detail; this is the shape.
+## Sandbox (cplt)
 
-1. **Plan.** State what changes, which repos, and the blast radius. Read the repo's own AGENTS.md first. Several exist and are more specific than anything here.
-2. **Review the plan.** Against the repo's conventions and against what happens on merge. Revise before writing code, not after.
-3. **Implement.** Follow the repo's `mise` tasks. Regenerate what is generated and commit it.
-4. **Adversarially review your own work.** Try to break it. This stage is not a summary of what you did. If it produces no findings, you did it wrong.
-5. **Draft PR.** Push a branch, open it as a draft, and say plainly what you are unsure about.
+Only under `$__CPLT_WRAPPED`: read `$CPLT_BRIEF` if set. Report denials; never bypass them.
 
-## Say less
-
-Short, exact, no filler. No preamble, no recap of what you just did, no restating the question. Fragments are fine.
-
-Keep exact: code, identifiers, error strings, endpoints, headers, flags, numbers. Never compress those.
-
-Comments explain why, never what. Code gets the shortest version that works: no abstraction for one caller, no config for a constant.
-
-Stay full-length for blast radius, anything irreversible, security and access decisions, ordered sequences, and what you are unsure about. See `output-style.instructions.md`.
+- Scratch and `$TMPDIR` are deleted on exit: helpers only, never worktrees or unfinished work, even if pre-approved or requested in a brief.
+- Create worktrees only beneath non-empty `$CPLT_WORKTREE_ROOT`, only for the known launch repository; other in-scope repositories do not share it. Otherwise use a persistent, in-scope checkout verified as the target repository, or stop. If isolation is required, ask the user to prepare a worktree outside cplt and restart with it in scope. Never fall back to scratch.
+- Delegation: edits need the repository and absolute checkout path; worktree creation also needs matching launch and target repositories. Require workers to reject unsafe paths even when supplied in a brief.
+- Managed worktrees persist. Leave permissions and `git worktree remove` to the user outside cplt. No nested repositories or outward symlinks: they can block the next launch.
 
 ## Non-negotiable
 
