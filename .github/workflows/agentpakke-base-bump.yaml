@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 jobs:
   bump:
-    uses: navikt/copilot/.github/workflows/agentpakke-base-bump.yaml@main
+    uses: navikt/copilot/.github/workflows/agentpakke-base-bump.yaml@12f7d1fa9ca902ab47130fa44842077717424cd5 # main
     permissions:
       contents: write
       pull-requests: write
